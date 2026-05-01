@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +16,7 @@ const credSchema = z.object({
 });
 
 const Auth = () => {
-  const { user } = useAuth();
+  const { user, signIn, signUp } = useAuth();
   const nav = useNavigate();
   const loc = useLocation() as { state?: { from?: { pathname?: string } } };
   const redirectTo = loc.state?.from?.pathname || "/dashboard";
@@ -49,28 +48,14 @@ const Auth = () => {
     }
     setLoading(true);
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/dashboard`,
-            data: { full_name: fullName },
-          },
-        });
-        if (error) throw error;
+      if (mode === 'signup') {
+        await signUp(email, password, fullName);
+        toast.success("Account created! Welcome to AgriBank.");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        await signIn(email, password);
+        toast.success("Signed in successfully.");
       }
-      // Mock 2FA: generate a 6-digit code and "send" it (toast for demo).
-      const c = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedCode(c);
-      toast.success(`2FA code sent to ${email}`, {
-        description: `Demo code: ${c}`,
-        duration: 8000,
-      });
-      setStep("twofa");
+      nav(redirectTo, { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Something went wrong");
     } finally {
@@ -125,20 +110,46 @@ const Auth = () => {
 
           {step === "creds" ? (
             <>
+              {/* Mode toggle */}
+              <div className="flex border-b border-border mb-6">
+                <button
+                  type="button"
+                  onClick={() => setMode("signin")}
+                  className={`flex-1 py-3 text-sm font-medium text-center transition-colors border-b-2 ${
+                    mode === "signin"
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("signup")}
+                  className={`flex-1 py-3 text-sm font-medium text-center transition-colors border-b-2 ${
+                    mode === "signup"
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Create account
+                </button>
+              </div>
+
               <h1 className="font-display text-3xl text-primary">
-                {mode === "signin" ? "Welcome back" : "Open your account"}
+                {mode === "signup" ? "Open an account" : "Welcome back"}
               </h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                {mode === "signin"
-                  ? "Sign in to your AgriBank account."
-                  : "It takes less than a minute. Verify later."}
+                {mode === "signup"
+                  ? "Join AgriBank today. Takes less than 2 minutes."
+                  : "Sign in to your AgriBank account."}
               </p>
 
               <form className="mt-8 space-y-4" onSubmit={handleCreds}>
-                {mode === "signup" && (
+                {mode === 'signup' && (
                   <div className="space-y-2">
-                    <Label htmlFor="name">Full name</Label>
-                    <Input id="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Anna Müller" />
+                    <Label htmlFor="fullName">Full name</Label>
+                    <Input id="fullName" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="John Doe" />
                   </div>
                 )}
                 <div className="space-y-2">
@@ -151,16 +162,9 @@ const Auth = () => {
                 </div>
 
                 <Button type="submit" variant="hero" size="lg" className="w-full" disabled={loading}>
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "signin" ? "Continue" : "Create account"}
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "signup" ? "Create account" : "Continue"}
                 </Button>
               </form>
-
-              <p className="mt-6 text-center text-sm text-muted-foreground">
-                {mode === "signin" ? "New to AgriBank?" : "Already with us?"}{" "}
-                <button onClick={() => setMode(mode === "signin" ? "signup" : "signin")} className="text-primary font-medium hover:underline">
-                  {mode === "signin" ? "Create an account" : "Sign in"}
-                </button>
-              </p>
             </>
           ) : (
             <>

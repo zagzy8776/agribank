@@ -1,17 +1,48 @@
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowUpRight, ArrowDownLeft, CreditCard, DollarSign, Clock, Eye } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, CreditCard, Clock, Eye } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
+import { fmtMoney } from '@/lib/format';
+import { Link } from 'react-router-dom';
+import { getUserAccounts, getUserTransactions } from '@/lib/mockStore';
 
 export default function Overview() {
-  const userBalance = 12450.75;
-  
-  const recentTransactions = [
-    { id: 1, type: "in", name: "Deposit", amount: 5000, date: "Today, 2:45 PM", status: "completed" },
-    { id: 2, type: "out", name: "Transfer to Sarah Wilson", amount: 250.50, date: "Yesterday", status: "completed" },
-    { id: 3, type: "in", name: "Interest Payment", amount: 12.75, date: "2 days ago", status: "completed" },
-    { id: 4, type: "out", name: "Card Purchase - Amazon", amount: 89.99, date: "3 days ago", status: "completed" },
-  ];
+  const { user } = useAuth();
+
+  // Real balance: sum all user accounts from mock store
+  const balanceQuery = useQuery({
+    queryKey: ['userBalance', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return 0;
+      const accounts = getUserAccounts(user.id);
+      return accounts.reduce((sum, acc) => sum + acc.balanceCents / 100, 0);
+    },
+    enabled: !!user?.id,
+  });
+
+  // Real recent transactions from mock store
+  const txnsQuery = useQuery({
+    queryKey: ['recentTxns', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      const txs = getUserTransactions(user.id, 5);
+      return txs.map(tx => ({
+        id: tx.id,
+        type: tx.direction === 'credit' ? 'credit' as const : 'debit' as const,
+        name: tx.description,
+        amount: tx.amountCents / 100,
+        currency: tx.currency,
+        date: new Date(tx.createdAt).toLocaleString(),
+        status: tx.status,
+      }));
+    },
+    enabled: !!user?.id,
+  });
+
+  const userBalance = balanceQuery.data || 0;
+  const recentTransactions = txnsQuery.data || [];
 
   return (
     <div className="space-y-6">
@@ -26,15 +57,21 @@ export default function Overview() {
             <CardTitle className="text-white opacity-90">Available Balance</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-4xl font-bold mb-6">${userBalance.toLocaleString()}</div>
+            <div className="text-4xl font-bold mb-6">
+              {fmtMoney(Math.round(userBalance * 100), 'EUR')}
+            </div>
             <div className="flex gap-2">
-              <Button className="bg-white text-green-700 hover:bg-gray-100">
+              <Button asChild className="bg-white text-green-700 hover:bg-gray-100">
+                <Link to="/dashboard/transfers">
                 <ArrowUpRight className="mr-2 h-4 w-4" />
                 Send Money
+                </Link>
               </Button>
-              <Button variant="secondary" className="bg-green-500 hover:bg-green-400 text-white">
+              <Button asChild variant="secondary" className="bg-green-500 hover:bg-green-400 text-white">
+                <Link to="/dashboard/transfers?tab=receive">
                 <ArrowDownLeft className="mr-2 h-4 w-4" />
                 Receive
+                </Link>
               </Button>
             </div>
           </CardContent>
@@ -64,11 +101,14 @@ export default function Overview() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
+            {recentTransactions.length === 0 && !txnsQuery.isLoading && (
+              <p className="text-sm text-muted-foreground">No transactions yet.</p>
+            )}
             {recentTransactions.map((tx) => (
               <div key={tx.id} className="flex items-center justify-between border-b py-3 last:border-0 last:pb-0">
                 <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-full ${tx.type === 'in' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
-                    {tx.type === 'in' ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
+                  <div className={`p-2 rounded-full ${tx.type === 'credit' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
+                    {tx.type === 'credit' ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                   </div>
                   <div>
                     <p className="font-medium">{tx.name}</p>
@@ -79,8 +119,8 @@ export default function Overview() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className={`font-semibold ${tx.type === 'in' ? 'text-green-600' : ''}`}>
-                    {tx.type === 'in' ? '+' : '-'}${tx.amount.toLocaleString()}
+                  <p className={`font-semibold ${tx.type === 'credit' ? 'text-green-600' : ''}`}>
+                    {tx.type === 'credit' ? '+' : '-'}{fmtMoney(Math.round(tx.amount * 100), tx.currency)}
                   </p>
                   <Badge variant="outline" className="text-xs mt-1">
                     {tx.status}
@@ -89,6 +129,7 @@ export default function Overview() {
               </div>
             ))}
           </div>
+          {balanceQuery.isLoading && <p>Loading...</p>}
           <Button variant="secondary" className="w-full mt-6">
             <Eye className="mr-2 h-4 w-4" />
             View All Transactions
@@ -102,7 +143,9 @@ export default function Overview() {
             <CardTitle className="text-sm font-medium">Total Deposits</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">$24,890.00</div>
+            <div className="text-2xl font-bold text-green-600">
+              {fmtMoney(Math.round((txnsQuery.data?.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0) || 0) * 100), 'EUR')}
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -110,7 +153,9 @@ export default function Overview() {
             <CardTitle className="text-sm font-medium">Total Withdrawals</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">$12,439.25</div>
+            <div className="text-2xl font-bold">
+              {fmtMoney(Math.round((txnsQuery.data?.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0) || 0) * 100), 'EUR')}
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -118,7 +163,9 @@ export default function Overview() {
             <CardTitle className="text-sm font-medium">Pending</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-amber-600">$0.00</div>
+            <div className="text-2xl font-bold text-amber-600">
+              {fmtMoney(Math.round((txnsQuery.data?.filter(t => t.status === 'pending').reduce((sum, t) => sum + t.amount, 0) || 0) * 100), 'EUR')}
+            </div>
           </CardContent>
         </Card>
       </div>

@@ -4,7 +4,6 @@ import { Accounts } from "@/components/agribank/Accounts";
 import { Tools } from "@/components/agribank/Tools";
 import { CardShowcase } from "@/components/agribank/CardShowcase";
 import { Trust } from "@/components/agribank/Trust";
-import { Pricing } from "@/components/agribank/Pricing";
 import { CTA } from "@/components/agribank/CTA";
 import { Footer } from "@/components/agribank/Footer";
 
@@ -18,7 +17,6 @@ const Index = () => {
         <Tools />
         <CardShowcase />
         <Trust />
-        <Pricing />
         <CTA />
       </main>
       <Footer />

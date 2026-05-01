@@ -8,7 +8,6 @@ const links = [
   { href: "#accounts", label: "Accounts" },
   { href: "#tools", label: "Features" },
   { href: "#trust", label: "Trust" },
-  { href: "#pricing", label: "Pricing" },
 ];
 
 export const Nav = () => {

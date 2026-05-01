@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,17 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Star, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { fmtIban } from "@/lib/format";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { z } from "zod";
+import { getUserRecipients, addRecipient, toggleRecipientFavorite, deleteRecipient, type MockRecipient } from "@/lib/mockStore";
+
+const CURRENCIES = ["EUR", "GBP", "USD", "CHF", "PLN", "VND", "JPY", "CAD", "AUD"] as const;
+const COUNTRIES = [
+  "Germany", "France", "Italy", "Spain", "Netherlands", "Ireland", "Belgium",
+  "Portugal", "Poland", "Austria", "Sweden", "Denmark", "Vietnam", "Japan",
+  "United States", "United Kingdom", "Canada", "Australia", "Switzerland",
+  "Singapore", "South Korea", "Thailand", "Malaysia", "Philippines", "India",
+];
 
 const ibanRe = /^[A-Z]{2}[0-9A-Z]{13,32}$/;
 const recipientSchema = z.object({
@@ -18,58 +27,58 @@ const recipientSchema = z.object({
   swift_bic: z.string().trim().toUpperCase().max(11).optional().or(z.literal("")),
   bank_name: z.string().trim().max(80).optional().or(z.literal("")),
   country: z.string().trim().max(40).optional().or(z.literal("")),
+  currency: z.enum(CURRENCIES),
 });
 
 const Recipients = () => {
   const { user } = useAuth();
-  const [list, setList] = useState<any[]>([]);
+  const [list, setList] = useState<MockRecipient[]>([]);
   const [open, setOpen] = useState(false);
 
   const [name, setName] = useState("");
   const [iban, setIban] = useState("");
   const [swift, setSwift] = useState("");
   const [bank, setBank] = useState("");
-  const [country, setCountry] = useState("");
+  const [country, setCountry] = useState("Germany");
+  const [currency, setCurrency] = useState<string>("EUR");
 
-  const load = async () => {
+  const load = () => {
     if (!user) return;
-    const { data } = await supabase.from("recipients").select("*").eq("user_id", user.id).order("is_favorite", { ascending: false }).order("created_at", { ascending: false });
-    setList(data || []);
+    setList(getUserRecipients(user.id));
   };
 
   useEffect(() => { load(); }, [user]);
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    const parsed = recipientSchema.safeParse({ name, iban: iban.replace(/\s+/g, ""), swift_bic: swift.replace(/\s+/g, ""), bank_name: bank, country });
+    if (!user?.id) return;
+    const parsed = recipientSchema.safeParse({ name, iban: iban.replace(/\s+/g, ""), swift_bic: swift.replace(/\s+/g, ""), bank_name: bank, country, currency });
     if (!parsed.success) {
       toast.error(parsed.error.issues[0].message);
       return;
     }
-    const { error } = await supabase.from("recipients").insert({
-      user_id: user!.id,
+    addRecipient({
+      userId: user.id,
       name: parsed.data.name,
       iban: parsed.data.iban,
-      swift_bic: parsed.data.swift_bic || null,
-      bank_name: parsed.data.bank_name || null,
-      country: parsed.data.country || null,
+      swiftBic: parsed.data.swift_bic || undefined,
+      bankName: parsed.data.bank_name || undefined,
+      country: parsed.data.country || undefined,
+      currency: parsed.data.currency,
+      isFavorite: false,
     });
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
     toast.success("Recipient added");
-    setName(""); setIban(""); setSwift(""); setBank(""); setCountry("");
+    setName(""); setIban(""); setSwift(""); setBank(""); setCountry("Germany"); setCurrency("EUR");
     setOpen(false);
     load();
   };
 
-  const toggleFav = async (r: any) => {
-    await supabase.from("recipients").update({ is_favorite: !r.is_favorite }).eq("id", r.id);
+  const toggleFav = (r: MockRecipient) => {
+    toggleRecipientFavorite(r.id, user!.id);
     load();
   };
-  const remove = async (id: string) => {
-    await supabase.from("recipients").delete().eq("id", id);
+  const remove = (r: MockRecipient) => {
+    deleteRecipient(r.id, user!.id);
     toast.success("Removed");
     load();
   };
@@ -93,7 +102,20 @@ const Recipients = () => {
               <div className="space-y-2"><Label>IBAN</Label><Input value={iban} onChange={(e) => setIban(e.target.value.toUpperCase())} placeholder="DE89 3704 ..." /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2"><Label>SWIFT / BIC</Label><Input value={swift} onChange={(e) => setSwift(e.target.value.toUpperCase())} placeholder="DEUTDEFF" /></div>
-                <div className="space-y-2"><Label>Country</Label><Input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="Germany" /></div>
+                <div className="space-y-2">
+                  <Label>Country</Label>
+                  <Select value={country} onValueChange={setCountry}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{COUNTRIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Currency</Label>
+                <Select value={currency} onValueChange={setCurrency}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                </Select>
               </div>
               <div className="space-y-2"><Label>Bank name</Label><Input value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Deutsche Bank" /></div>
               <DialogFooter>
@@ -112,14 +134,19 @@ const Recipients = () => {
             {list.map((r) => (
               <div key={r.id} className="flex items-center gap-4 px-5 sm:px-6 py-4">
                 <button onClick={() => toggleFav(r)} className="text-muted-foreground hover:text-accent">
-                  <Star className={`h-4 w-4 ${r.is_favorite ? "fill-accent text-accent" : ""}`} />
+                  <Star className={`h-4 w-4 ${r.isFavorite ? "fill-accent text-accent" : ""}`} />
                 </button>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{r.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{fmtIban(r.iban)}{r.swift_bic ? ` · ${r.swift_bic}` : ""}{r.bank_name ? ` · ${r.bank_name}` : ""}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {r.country || ""} {r.currency ? `· ${r.currency}` : ""}
+                    {r.iban ? ` · ${fmtIban(r.iban)}` : ""}
+                    {r.swiftBic ? ` · ${r.swiftBic}` : ""}
+                    {r.bankName ? ` · ${r.bankName}` : ""}
+                  </p>
                 </div>
                 <span className="text-xs px-2 py-1 rounded-full bg-secondary">{r.currency}</span>
-                <Button variant="ghost" size="sm" onClick={() => remove(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                <Button variant="ghost" size="sm" onClick={() => remove(r)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
               </div>
             ))}
           </div>

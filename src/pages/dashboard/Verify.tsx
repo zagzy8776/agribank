@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ShieldCheck, Camera, FileText, MapPin, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { getAllKyc, submitKyc } from "@/lib/mockStore";
 
 const STEPS = [
   { id: 1, label: "ID document", icon: FileText },
@@ -17,7 +17,11 @@ const STEPS = [
   { id: 4, label: "Review", icon: ShieldCheck },
 ];
 
-const COUNTRIES = ["Germany", "France", "Italy", "Spain", "Netherlands", "Ireland", "Belgium", "Portugal", "Poland", "Austria", "Sweden", "Denmark"];
+const COUNTRIES = [
+  "Germany", "France", "Italy", "Spain", "Netherlands", "Ireland", "Belgium",
+  "Portugal", "Poland", "Austria", "Sweden", "Denmark", "Vietnam", "Japan",
+  "United States", "United Kingdom", "Canada", "Australia", "Switzerland",
+];
 
 const schema = z.object({
   document_type: z.string().min(2),
@@ -31,7 +35,7 @@ const schema = z.object({
 
 const Verify = () => {
   const { user } = useAuth();
-  const [profile, setProfile] = useState<any>(null);
+  const [profileStatus, setProfileStatus] = useState<string>("not_started");
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
@@ -46,10 +50,12 @@ const Verify = () => {
 
   useEffect(() => {
     if (!user) return;
-    supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle().then(({ data }) => setProfile(data));
+    const allKyc = getAllKyc();
+    const userKyc = allKyc.find(k => k.userId === user.id);
+    if (userKyc) setProfileStatus(userKyc.status);
   }, [user]);
 
-  const submit = async () => {
+  const submit = () => {
     const parsed = schema.safeParse({
       document_type: docType, document_number: docNumber, document_country: docCountry,
       address_line: addressLine, city, postal_code: postal, country,
@@ -58,36 +64,21 @@ const Verify = () => {
     if (!selfieDone) { toast.error("Please complete the selfie step"); return; }
 
     setSubmitting(true);
-    try {
-      const { error: kErr } = await supabase.from("kyc_verifications").insert({
-        user_id: user!.id,
-        ...parsed.data,
-        selfie_taken: true,
-        status: "verified",
-        reviewed_at: new Date().toISOString(),
-      });
-      if (kErr) throw kErr;
-
-      const { error: pErr } = await supabase.from("profiles").update({
-        kyc_status: "verified",
-        country: parsed.data.country,
+    setTimeout(() => {
+      submitKyc({
+        userId: user!.id,
+        documentType: parsed.data.document_type,
+        documentCountry: parsed.data.document_country,
         city: parsed.data.city,
-        address_line: parsed.data.address_line,
-        postal_code: parsed.data.postal_code,
-      }).eq("user_id", user!.id);
-      if (pErr) throw pErr;
-
-      toast.success("Identity verified");
-      const { data } = await supabase.from("profiles").select("*").eq("user_id", user!.id).maybeSingle();
-      setProfile(data);
-    } catch (e: any) {
-      toast.error(e.message || "Verification failed");
-    } finally {
+        country: parsed.data.country,
+      });
+      setProfileStatus("pending");
       setSubmitting(false);
-    }
+      toast.success("Verification submitted. Awaiting admin review.");
+    }, 600);
   };
 
-  if (profile?.kyc_status === "verified") {
+  if (profileStatus === "verified") {
     return (
       <div className="px-5 sm:px-8 lg:px-12 py-8 lg:py-12 max-w-2xl">
         <p className="text-xs uppercase tracking-[0.22em] text-moss font-medium">Identity</p>
@@ -97,7 +88,20 @@ const Verify = () => {
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <h2 className="mt-6 font-display text-2xl text-primary">You're verified</h2>
-          <p className="mt-3 text-muted-foreground max-w-sm mx-auto">SWIFT international transfers, crypto trading and higher daily limits are all unlocked.</p>
+          <p className="mt-3 text-muted-foreground max-w-sm mx-auto">SWIFT, crypto trading and higher limits unlocked.</p>
+        </Card>
+      </div>
+    );
+  }
+
+  if (profileStatus === "pending") {
+    return (
+      <div className="px-5 sm:px-8 lg:px-12 py-8 lg:py-12 max-w-2xl">
+        <p className="text-xs uppercase tracking-[0.22em] text-moss font-medium">Identity</p>
+        <h1 className="mt-2 font-display text-3xl md:text-4xl text-primary">Under review</h1>
+        <Card className="mt-8 p-8 border-border/70 text-center">
+          <h2 className="font-display text-2xl text-primary">KYC submitted</h2>
+          <p className="mt-3 text-muted-foreground max-w-sm mx-auto">Documents submitted. Admin will review shortly.</p>
         </Card>
       </div>
     );
@@ -109,7 +113,6 @@ const Verify = () => {
       <h1 className="mt-2 font-display text-3xl md:text-4xl text-primary">Verify your account</h1>
       <p className="mt-2 text-muted-foreground">Required by European banking regulations. Takes about 4 minutes.</p>
 
-      {/* Step indicator */}
       <div className="mt-8 grid grid-cols-4 gap-2">
         {STEPS.map((s) => (
           <div key={s.id} className="flex flex-col items-center gap-2">
@@ -156,7 +159,7 @@ const Verify = () => {
         {step === 2 && (
           <>
             <h2 className="font-display text-2xl text-primary">Selfie check</h2>
-            <p className="mt-2 text-sm text-muted-foreground">We compare your selfie to your ID. This is a demo — click below to simulate.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Demo — click below to simulate.</p>
             <div className="mt-6 grid place-items-center">
               <button
                 type="button"

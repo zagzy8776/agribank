@@ -1,78 +1,74 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowDownRight, ArrowUpRight, Loader2, Bitcoin } from "lucide-react";
 import { fmtMoney, fmtNumber, fmtCrypto } from "@/lib/format";
 import { toast } from "sonner";
+import { getMockCryptoPrices, getUserAccounts, addTransaction, updateBalance, type MockCryptoCoin, type MockAccount } from "@/lib/mockStore";
 
-interface Coin {
-  id: string; symbol: string; name: string; price_eur: number; change_24h: number;
-}
 interface Holding {
-  id?: string; symbol: string; name: string; amount: number; avg_buy_price_eur: number;
+  symbol: string; name: string; amount: number; avgBuyPriceEur: number;
 }
 
 const Crypto = () => {
   const { user } = useAuth();
-  const [coins, setCoins] = useState<Coin[]>([]);
+  const [coins, setCoins] = useState<MockCryptoCoin[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>([]);
-  const [eurAccount, setEurAccount] = useState<any>(null);
+  const [eurAccount, setEurAccount] = useState<MockAccount | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const [tradeOpen, setTradeOpen] = useState(false);
-  const [tradeCoin, setTradeCoin] = useState<Coin | null>(null);
+  const [tradeCoin, setTradeCoin] = useState<MockCryptoCoin | null>(null);
   const [tradeMode, setTradeMode] = useState<"buy" | "sell">("buy");
   const [tradeAmountEur, setTradeAmountEur] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const load = async () => {
+  const load = () => {
     if (!user) return;
-    const [{ data: prices }, { data: h }, { data: a }] = await Promise.all([
-      supabase.functions.invoke("crypto-prices"),
-      supabase.from("crypto_holdings").select("*").eq("user_id", user.id),
-      supabase.from("accounts").select("*").eq("user_id", user.id).eq("currency", "EUR").eq("is_primary", true).maybeSingle(),
-    ]);
-    if (prices?.coins) setCoins(prices.coins);
-    setHoldings((h as any) || []);
-    setEurAccount(a);
+    const prices = getMockCryptoPrices();
+    setCoins(prices);
+
+    const accounts = getUserAccounts(user.id);
+    const eur = accounts.find(a => a.currency === "EUR" && a.isPrimary) || null;
+    setEurAccount(eur);
+
+    // Load holdings from localStorage (simplified for mock)
+    try {
+      const raw = localStorage.getItem(`crypto_holdings_${user.id}`);
+      setHoldings(raw ? JSON.parse(raw) : []);
+    } catch {
+      setHoldings([]);
+    }
     setLoading(false);
   };
 
   useEffect(() => { load(); }, [user]);
 
-  // Auto-refresh prices every 30s
-  useEffect(() => {
-    const i = setInterval(async () => {
-      setRefreshing(true);
-      const { data } = await supabase.functions.invoke("crypto-prices");
-      if (data?.coins) setCoins(data.coins);
-      setRefreshing(false);
-    }, 30000);
-    return () => clearInterval(i);
-  }, []);
+  const saveHoldings = (h: Holding[]) => {
+    setHoldings(h);
+    localStorage.setItem(`crypto_holdings_${user!.id}`, JSON.stringify(h));
+  };
 
   const portfolioValue = holdings.reduce((s, h) => {
     const c = coins.find((c) => c.symbol === h.symbol);
     return s + h.amount * (c?.price_eur ?? 0);
   }, 0);
-  const portfolioCost = holdings.reduce((s, h) => s + h.amount * h.avg_buy_price_eur, 0);
+  const portfolioCost = holdings.reduce((s, h) => s + h.amount * h.avgBuyPriceEur, 0);
   const pnl = portfolioValue - portfolioCost;
 
-  const openTrade = (coin: Coin, mode: "buy" | "sell") => {
+  const openTrade = (coin: MockCryptoCoin, mode: "buy" | "sell") => {
     setTradeCoin(coin);
     setTradeMode(mode);
     setTradeAmountEur("");
     setTradeOpen(true);
   };
 
-  const submitTrade = async () => {
+  const submitTrade = () => {
     if (!tradeCoin || !user || !eurAccount) return;
     const amtEur = parseFloat(tradeAmountEur || "0");
     if (!amtEur || amtEur <= 0) { toast.error("Enter an amount"); return; }
@@ -81,61 +77,58 @@ const Crypto = () => {
     const existing = holdings.find((h) => h.symbol === tradeCoin.symbol);
 
     if (tradeMode === "buy") {
-      if (cents > eurAccount.balance_cents) { toast.error("Insufficient EUR balance"); return; }
+      if (cents > eurAccount.balanceCents) { toast.error("Insufficient EUR balance"); return; }
     } else {
       if (!existing || existing.amount < cryptoQty) { toast.error(`Not enough ${tradeCoin.symbol}`); return; }
     }
     setSubmitting(true);
-    try {
-      // 1) Update EUR account balance
-      const newBal = tradeMode === "buy" ? eurAccount.balance_cents - cents : eurAccount.balance_cents + cents;
-      const { error: balErr } = await supabase.from("accounts").update({ balance_cents: newBal }).eq("id", eurAccount.id);
-      if (balErr) throw balErr;
+    setTimeout(() => {
+      try {
+        // 1) Update EUR account balance
+        const newBal = tradeMode === "buy" ? eurAccount.balanceCents - cents : eurAccount.balanceCents + cents;
+        updateBalance(eurAccount.id, newBal);
+        setEurAccount({ ...eurAccount, balanceCents: newBal });
 
-      // 2) Update holdings
-      if (tradeMode === "buy") {
-        if (existing) {
-          const newAmount = Number(existing.amount) + cryptoQty;
-          const newAvg = ((Number(existing.amount) * Number(existing.avg_buy_price_eur)) + amtEur) / newAmount;
-          const { error } = await supabase.from("crypto_holdings").update({ amount: newAmount, avg_buy_price_eur: newAvg }).eq("id", existing.id!);
-          if (error) throw error;
+        // 2) Update holdings
+        let newHoldings = [...holdings];
+        if (tradeMode === "buy") {
+          if (existing) {
+            const newAmount = existing.amount + cryptoQty;
+            const newAvg = ((existing.amount * existing.avgBuyPriceEur) + amtEur) / newAmount;
+            newHoldings = newHoldings.map(h => h.symbol === tradeCoin.symbol ? { ...h, amount: newAmount, avgBuyPriceEur: newAvg } : h);
+          } else {
+            newHoldings.push({ symbol: tradeCoin.symbol, name: tradeCoin.name, amount: cryptoQty, avgBuyPriceEur: tradeCoin.price_eur });
+          }
         } else {
-          const { error } = await supabase.from("crypto_holdings").insert({
-            user_id: user.id, symbol: tradeCoin.symbol, name: tradeCoin.name,
-            amount: cryptoQty, avg_buy_price_eur: tradeCoin.price_eur,
-          });
-          if (error) throw error;
+          const newAmount = existing!.amount - cryptoQty;
+          if (newAmount <= 0.0000001) {
+            newHoldings = newHoldings.filter(h => h.symbol !== tradeCoin.symbol);
+          } else {
+            newHoldings = newHoldings.map(h => h.symbol === tradeCoin.symbol ? { ...h, amount: newAmount } : h);
+          }
         }
-      } else {
-        const newAmount = Number(existing!.amount) - cryptoQty;
-        if (newAmount <= 0.0000001) {
-          await supabase.from("crypto_holdings").delete().eq("id", existing!.id!);
-        } else {
-          await supabase.from("crypto_holdings").update({ amount: newAmount }).eq("id", existing!.id!);
-        }
+        saveHoldings(newHoldings);
+
+        // 3) Record transaction
+        addTransaction({
+          userId: user.id,
+          accountId: eurAccount.id,
+          direction: tradeMode === "buy" ? "debit" : "credit",
+          amountCents: cents,
+          currency: "EUR",
+          description: `${tradeMode === "buy" ? "Buy" : "Sell"} ${fmtCrypto(cryptoQty)} ${tradeCoin.symbol}`,
+          category: "Crypto",
+          status: "completed",
+        });
+
+        toast.success(`${tradeMode === "buy" ? "Bought" : "Sold"} ${fmtCrypto(cryptoQty)} ${tradeCoin.symbol}`);
+        setTradeOpen(false);
+      } catch (e: any) {
+        toast.error(e.message || "Trade failed");
+      } finally {
+        setSubmitting(false);
       }
-
-      // 3) Record transaction
-      await supabase.from("transactions").insert({
-        user_id: user.id,
-        account_id: eurAccount.id,
-        direction: tradeMode === "buy" ? "debit" : "credit",
-        amount_cents: cents,
-        currency: "EUR",
-        description: `${tradeMode === "buy" ? "Buy" : "Sell"} ${fmtCrypto(cryptoQty)} ${tradeCoin.symbol}`,
-        category: "Crypto",
-        network: "internal",
-        status: "completed",
-      });
-
-      toast.success(`${tradeMode === "buy" ? "Bought" : "Sold"} ${fmtCrypto(cryptoQty)} ${tradeCoin.symbol}`);
-      setTradeOpen(false);
-      load();
-    } catch (e: any) {
-      toast.error(e.message || "Trade failed");
-    } finally {
-      setSubmitting(false);
-    }
+    }, 300);
   };
 
   return (
@@ -146,7 +139,6 @@ const Crypto = () => {
           <h1 className="mt-2 font-display text-3xl md:text-4xl text-primary">Crypto</h1>
           <p className="mt-2 text-muted-foreground">Live prices in EUR. Settle instantly from your main account.</p>
         </div>
-        {refreshing && <span className="text-xs text-muted-foreground flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> Updating prices…</span>}
       </div>
 
       {/* Portfolio summary */}
@@ -159,7 +151,7 @@ const Crypto = () => {
             {pnl >= 0 ? "+" : ""}{fmtMoney(Math.round(pnl * 100), "EUR")}
           </span>
         </div>
-        <p className="mt-2 text-xs opacity-70">Available EUR balance: {fmtMoney(eurAccount?.balance_cents ?? 0, "EUR")}</p>
+        <p className="mt-2 text-xs opacity-70">Available EUR balance: {fmtMoney(eurAccount?.balanceCents ?? 0, "EUR")}</p>
       </Card>
 
       {/* Holdings */}
@@ -169,8 +161,8 @@ const Crypto = () => {
           <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {holdings.map((h) => {
               const c = coins.find((c) => c.symbol === h.symbol);
-              const value = (c?.price_eur ?? 0) * Number(h.amount);
-              const cost = Number(h.avg_buy_price_eur) * Number(h.amount);
+              const value = (c?.price_eur ?? 0) * h.amount;
+              const cost = h.avgBuyPriceEur * h.amount;
               const p = value - cost;
               return (
                 <Card key={h.symbol} className="p-5 border-border/70">
@@ -182,7 +174,7 @@ const Crypto = () => {
                     <Bitcoin className="h-5 w-5 text-accent" />
                   </div>
                   <p className="mt-3 font-display text-xl text-primary">{fmtMoney(Math.round(value * 100), "EUR")}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{fmtCrypto(Number(h.amount))} {h.symbol}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{fmtCrypto(h.amount)} {h.symbol}</p>
                   <p className={`mt-1 text-xs ${p >= 0 ? "text-moss" : "text-destructive"}`}>{p >= 0 ? "+" : ""}{fmtMoney(Math.round(p * 100), "EUR")}</p>
                 </Card>
               );

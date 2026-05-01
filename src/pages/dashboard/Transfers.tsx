@@ -1,26 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Copy, Loader2, Send, Globe2, Banknote, ArrowRight } from "lucide-react";
 import { fmtMoney, fmtIban, fmtNumber } from "@/lib/format";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
+import { getUserAccounts, getUserRecipients, addRecipient, addTransaction, updateBalance, type MockAccount, type MockRecipient } from "@/lib/mockStore";
 
-const CURRENCIES = ["EUR", "GBP", "USD", "CHF", "PLN"] as const;
+const CURRENCIES = ["EUR", "GBP", "USD", "CHF", "PLN", "VND", "JPY", "CAD", "AUD"] as const;
 type Currency = typeof CURRENCIES[number];
+
+const COUNTRIES = [
+  "Germany", "France", "Italy", "Spain", "Netherlands", "Ireland", "Belgium",
+  "Portugal", "Poland", "Austria", "Sweden", "Denmark", "Vietnam", "Japan",
+  "United States", "United Kingdom", "Canada", "Australia", "Switzerland",
+  "Singapore", "South Korea", "Thailand", "Malaysia", "Philippines", "India",
+];
 
 const ibanRe = /^[A-Z]{2}[0-9A-Z]{13,32}$/;
 const swiftRe = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
 
 const transferSchema = z.object({
-  fromAccountId: z.string().uuid("Choose a source account"),
+  fromAccountId: z.string().min(1, "Choose a source account"),
   network: z.enum(["sepa", "sepa_instant", "swift"]),
   recipientName: z.string().trim().min(2).max(80),
   iban: z.string().trim().toUpperCase().regex(ibanRe, "Invalid IBAN"),
@@ -31,16 +39,23 @@ const transferSchema = z.object({
   saveRecipient: z.boolean().optional(),
 });
 
+// Mock FX rates
+const MOCK_RATES: Record<string, number> = {
+  EUR: 1, GBP: 0.86, USD: 1.09, CHF: 0.97, PLN: 4.32,
+  VND: 26850, JPY: 162.5, CAD: 1.48, AUD: 1.65,
+};
+
 const Transfers = () => {
   const { user } = useAuth();
   const [params] = useSearchParams();
   const initialTab = params.get("tab") === "receive" ? "receive" : "send";
 
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [recipients, setRecipients] = useState<any[]>([]);
-  const [rates, setRates] = useState<Record<string, number>>({ EUR: 1 });
-  const [loadingRates, setLoadingRates] = useState(true);
+  const [accounts, setAccounts] = useState<MockAccount[]>([]);
+  const [recipients, setRecipients] = useState<MockRecipient[]>([]);
+  const [rates, setRates] = useState<Record<string, number>>(MOCK_RATES);
+  const [loadingRates, setLoadingRates] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showSendDialog, setShowSendDialog] = useState(false);
 
   const [fromAccountId, setFromAccountId] = useState("");
   const [network, setNetwork] = useState<"sepa" | "sepa_instant" | "swift">("sepa_instant");
@@ -51,25 +66,16 @@ const Transfers = () => {
   const [toCurrency, setToCurrency] = useState<Currency>("EUR");
   const [description, setDescription] = useState("");
   const [saveRecipient, setSaveRecipient] = useState(true);
+  const [recipientCountry, setRecipientCountry] = useState("Germany");
+  const [recipientBank, setRecipientBank] = useState("");
 
   useEffect(() => {
     if (!user) return;
-    (async () => {
-      const [{ data: a }, { data: r }] = await Promise.all([
-        supabase.from("accounts").select("*").eq("user_id", user.id).order("is_primary", { ascending: false }),
-        supabase.from("recipients").select("*").eq("user_id", user.id).order("is_favorite", { ascending: false }),
-      ]);
-      setAccounts(a || []);
-      setRecipients(r || []);
-      if (a && a[0]) setFromAccountId(a[0].id);
-    })();
-    // FX
-    supabase.functions
-      .invoke("fx-rates")
-      .then(({ data }) => {
-        if (data?.rates) setRates(data.rates);
-      })
-      .finally(() => setLoadingRates(false));
+    const userAccounts = getUserAccounts(user.id);
+    setAccounts(userAccounts);
+    if (userAccounts.length > 0) setFromAccountId(userAccounts[0].id);
+    setRecipients(getUserRecipients(user.id));
+    setLoadingRates(false);
   }, [user]);
 
   const fromAccount = accounts.find((a) => a.id === fromAccountId);
@@ -79,7 +85,6 @@ const Transfers = () => {
     if (!fromAccount || !amt || !rates[fromAccount.currency] || !rates[toCurrency]) {
       return { rate: 1, converted: amt, fee: 0, total: amt };
     }
-    // base EUR — rates[ccy] = ccy per 1 EUR
     const eurAmount = amt / rates[fromAccount.currency];
     const converted = eurAmount * rates[toCurrency];
     const rate = rates[toCurrency] / rates[fromAccount.currency];
@@ -87,7 +92,7 @@ const Transfers = () => {
     if (network === "sepa") feePct = 0;
     if (network === "sepa_instant") feePct = 0.001;
     if (network === "swift") feePct = 0.005;
-    const fee = amt * feePct + (network === "swift" ? 4 : 0); // €4 fixed for SWIFT
+    const fee = amt * feePct + (network === "swift" ? 4 : 0);
     return { rate, converted, fee, total: amt + fee };
   }, [amount, fromAccount, toCurrency, rates, network]);
 
@@ -114,7 +119,7 @@ const Transfers = () => {
     }
     if (!fromAccount) return;
     const totalCents = Math.round(conversion.total * 100);
-    if (totalCents > fromAccount.balance_cents) {
+    if (totalCents > fromAccount.balanceCents) {
       toast.error("Insufficient balance");
       return;
     }
@@ -122,51 +127,44 @@ const Transfers = () => {
     setSubmitting(true);
     try {
       // 1. Debit source
-      const newBal = fromAccount.balance_cents - totalCents;
-      const { error: balErr } = await supabase
-        .from("accounts")
-        .update({ balance_cents: newBal })
-        .eq("id", fromAccount.id);
-      if (balErr) throw balErr;
+      const newBal = fromAccount.balanceCents - totalCents;
+      updateBalance(fromAccount.id, newBal);
 
       // 2. Insert transaction
-      const { error: txErr } = await supabase.from("transactions").insert({
-        user_id: user!.id,
-        account_id: fromAccount.id,
+      addTransaction({
+        userId: user!.id,
+        accountId: fromAccount.id,
         direction: "debit",
-        amount_cents: Math.round(parseFloat(amount) * 100),
+        amountCents: Math.round(parseFloat(amount) * 100),
         currency: fromAccount.currency,
         description: description || `Transfer to ${recipientName}`,
         category: "Transfer",
-        counterparty_name: recipientName,
-        counterparty_iban: parsed.data.iban,
-        counterparty_swift: parsed.data.swift || null,
+        counterpartyName: recipientName,
+        counterpartyIban: parsed.data.iban,
         network,
-        fx_rate: conversion.rate,
-        fee_cents: Math.round(conversion.fee * 100),
         status: "completed",
       });
-      if (txErr) throw txErr;
 
       // 3. Save recipient
       if (saveRecipient) {
-        await supabase.from("recipients").upsert(
-          {
-            user_id: user!.id,
-            name: recipientName,
-            iban: parsed.data.iban,
-            swift_bic: parsed.data.swift || null,
-            currency: toCurrency,
-          },
-          { onConflict: "user_id,iban" as any, ignoreDuplicates: true } as any,
-        );
+        addRecipient({
+          userId: user!.id,
+          name: recipientName,
+          iban: parsed.data.iban,
+          swiftBic: parsed.data.swift || undefined,
+          bankName: recipientBank || undefined,
+          country: recipientCountry,
+          currency: toCurrency,
+          isFavorite: false,
+        });
       }
 
       toast.success(`Sent ${fmtMoney(Math.round(parseFloat(amount) * 100), fromAccount.currency)} to ${recipientName}`);
       // Refresh
-      const { data: a } = await supabase.from("accounts").select("*").eq("user_id", user!.id).order("is_primary", { ascending: false });
-      setAccounts(a || []);
+      setAccounts(getUserAccounts(user!.id));
+      setRecipients(getUserRecipients(user!.id));
       setAmount(""); setDescription(""); setRecipientName(""); setIban(""); setSwift("");
+      setShowSendDialog(false);
     } catch (err: any) {
       toast.error(err.message || "Transfer failed");
     } finally {
@@ -179,12 +177,15 @@ const Transfers = () => {
     toast.success("Copied");
   };
 
-  const useRecipient = (r: any) => {
+  const selectRecipient = (r: MockRecipient) => {
     setRecipientName(r.name);
     setIban(r.iban || "");
-    setSwift(r.swift_bic || "");
-    setToCurrency(r.currency || "EUR");
-    if (r.swift_bic) setNetwork("swift");
+    setSwift(r.swiftBic || "");
+    setToCurrency(r.currency as Currency);
+    setRecipientCountry(r.country || "Germany");
+    setRecipientBank(r.bankName || "");
+    if (r.swiftBic) setNetwork("swift");
+    setShowSendDialog(true);
   };
 
   return (
@@ -203,7 +204,7 @@ const Transfers = () => {
         <TabsContent value="send" className="mt-6">
           <div className="grid lg:grid-cols-3 gap-6">
             <Card className="lg:col-span-2 p-6 border-border/70">
-              <form onSubmit={handleSend} className="space-y-5">
+              <form onSubmit={(e) => { e.preventDefault(); setShowSendDialog(true); }} className="space-y-5">
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>From account</Label>
@@ -212,7 +213,7 @@ const Transfers = () => {
                       <SelectContent>
                         {accounts.map((a) => (
                           <SelectItem key={a.id} value={a.id}>
-                            {a.name} · {fmtMoney(a.balance_cents, a.currency)}
+                            {a.name} · {fmtMoney(a.balanceCents, a.currency)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -251,6 +252,20 @@ const Transfers = () => {
 
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
+                    <Label>Recipient country</Label>
+                    <Select value={recipientCountry} onValueChange={setRecipientCountry}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{COUNTRIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Recipient bank</Label>
+                    <Input value={recipientBank} onChange={(e) => setRecipientBank(e.target.value)} placeholder="Vietcombank" />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
                     <Label htmlFor="amt">Amount ({fromAccount?.currency || "EUR"})</Label>
                     <Input id="amt" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="100.00" />
                   </div>
@@ -275,8 +290,8 @@ const Transfers = () => {
                   Save to recipient book
                 </label>
 
-                <Button type="submit" variant="hero" size="lg" disabled={submitting} className="w-full">
-                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Send {amount ? fmtMoney(Math.round(parseFloat(amount || "0") * 100), fromAccount?.currency) : "money"} <ArrowRight className="h-4 w-4" /></>}
+                <Button type="submit" variant="hero" size="lg" className="w-full">
+                  Review & continue <ArrowRight className="h-4 w-4" />
                 </Button>
               </form>
             </Card>
@@ -287,9 +302,7 @@ const Transfers = () => {
                 <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-2">
                   <Globe2 className="h-3.5 w-3.5" /> Live exchange
                 </p>
-                {loadingRates ? (
-                  <div className="mt-4 text-sm text-muted-foreground">Loading rates…</div>
-                ) : (
+                {amount ? (
                   <>
                     <p className="mt-3 font-display text-3xl text-primary">
                       {fmtNumber(conversion.converted, 2)} <span className="text-base text-muted-foreground">{toCurrency}</span>
@@ -303,20 +316,24 @@ const Transfers = () => {
                       <div className="flex justify-between font-medium pt-2 border-t border-border"><span>You pay</span><span>{fmtMoney(Math.round(conversion.total * 100), fromAccount?.currency)}</span></div>
                     </div>
                   </>
+                ) : (
+                  <p className="mt-4 text-sm text-muted-foreground">Enter an amount to see conversion.</p>
                 )}
               </Card>
 
               <Card className="p-5 border-border/70">
                 <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Saved recipients</p>
                 {recipients.length === 0 ? (
-                  <p className="mt-3 text-sm text-muted-foreground">No recipients yet. They'll appear here.</p>
+                  <p className="mt-3 text-sm text-muted-foreground">No recipients yet.</p>
                 ) : (
                   <ul className="mt-3 space-y-2 max-h-72 overflow-auto">
                     {recipients.slice(0, 6).map((r) => (
                       <li key={r.id}>
-                        <button onClick={() => useRecipient(r)} className="w-full text-left p-3 rounded-lg hover:bg-secondary transition-colors">
+                        <button onClick={() => selectRecipient(r)} className="w-full text-left p-3 rounded-lg hover:bg-secondary transition-colors">
                           <p className="text-sm font-medium">{r.name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{fmtIban(r.iban)}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {r.country || ""} {r.currency ? `· ${r.currency}` : ""} {r.iban ? `· ${fmtIban(r.iban)}` : ""}
+                          </p>
                         </button>
                       </li>
                     ))}
@@ -364,6 +381,30 @@ const Transfers = () => {
           </p>
         </TabsContent>
       </Tabs>
+
+      {/* Send confirmation dialog */}
+      <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">Confirm transfer</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">From</span><span>{fromAccount?.name} ({fromAccount?.currency})</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">To</span><span>{recipientName}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Network</span><span>{network === "sepa_instant" ? "SEPA Instant" : network.toUpperCase()}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span className="font-semibold">{fmtMoney(Math.round(parseFloat(amount || "0") * 100), fromAccount?.currency)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Fee</span><span>{fmtMoney(Math.round(conversion.fee * 100), fromAccount?.currency)}</span></div>
+            <div className="flex justify-between font-bold pt-2 border-t"><span>Total</span><span>{fmtMoney(Math.round(conversion.total * 100), fromAccount?.currency)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Recipient gets</span><span className="text-green-600 font-medium">{fmtNumber(conversion.converted, 2)} {toCurrency}</span></div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowSendDialog(false)}>Cancel</Button>
+            <Button variant="hero" onClick={handleSend} disabled={submitting}>
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm & send"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

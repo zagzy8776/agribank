@@ -14,8 +14,8 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { getUserById, getAllKyc } from "@/lib/mockStore";
 
 const nav = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard, end: true },
@@ -34,12 +34,14 @@ export const DashboardLayout = () => {
 
   useEffect(() => {
     if (!user) return;
-    supabase
-      .from("profiles")
-      .select("full_name, kyc_status")
-      .eq("user_id", user.id)
-      .maybeSingle()
-      .then(({ data }) => setProfile(data as any));
+    // Get user from mock store
+    const mockUser = getUserById(user.id);
+    const allKyc = getAllKyc();
+    const userKyc = allKyc.find(k => k.userId === user.id);
+    setProfile({
+      full_name: mockUser?.fullName || null,
+      kyc_status: userKyc?.status || 'not_started',
+    });
   }, [user]);
 
   const onSignOut = async () => {

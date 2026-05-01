@@ -11,15 +11,10 @@ import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import {
   getAllUsers, getAllAccounts, getAllTransactions, getAllKyc, getAllAuditLogs,
-  getUserById, updateBalance as localUpdateBalance, addTransaction as localAddTransaction,
-  updateKycStatus, addAuditLog as localAddAuditLog, getPrimaryAccount,
+  getUserById, updateBalance, addTransaction, updateKycStatus, addAuditLog, getPrimaryAccount,
   updateTransactionStatus, toggleUserFreeze, deleteUser,
   type MockAccount, type MockTransaction, type MockKyc, type MockAuditLog,
 } from '@/lib/mockStore';
-import {
-  apiGetAllUsers, apiGetAllAccounts, apiGetAllTransactions, apiGetAllKyc, apiGetAuditLogs,
-  apiUpdateBalance, apiAddTransaction, apiAddAuditLog, apiToggleFreeze, apiDeleteUser, apiUpdateKyc,
-} from '@/lib/backendStore';
 
 type AdminUser = {
   id: string;
@@ -60,61 +55,47 @@ export default function Admin() {
 
   const loadData = () => {
     setLoading(true);
-    (async () => {
-      try {
-        // Try Render API first, fall back to localStorage
-        let allUsers: any[], allAccounts: any[], allTx: any[], allKyc: any[], allLogs: any[];
-        try {
-          [allUsers, allAccounts, allTx, allKyc, allLogs] = await Promise.all([
-            apiGetAllUsers(), apiGetAllAccounts(), apiGetAllTransactions(), apiGetAllKyc(), apiGetAuditLogs()
-          ]);
-        } catch {
-          allUsers = getAllUsers();
-          allAccounts = getAllAccounts();
-          allTx = getAllTransactions();
-          allKyc = getAllKyc();
-          allLogs = getAllAuditLogs();
-        }
+    setTimeout(() => {
+      const allUsers = getAllUsers();
+      const allAccounts = getAllAccounts();
+      const allTx = getAllTransactions();
+      const allKyc = getAllKyc();
+      const allLogs = getAllAuditLogs();
 
-        const accountsByUser = new Map<string, any[]>();
-        allAccounts.forEach((a: any) => {
-          const uid = a.user_id || a.userId;
-          if (!accountsByUser.has(uid)) accountsByUser.set(uid, []);
-          accountsByUser.get(uid)!.push(a);
-        });
+      const accountsByUser = new Map<string, MockAccount[]>();
+      allAccounts.forEach(a => {
+        if (!accountsByUser.has(a.userId)) accountsByUser.set(a.userId, []);
+        accountsByUser.get(a.userId)!.push(a);
+      });
 
-        const kycByUser = new Map<string, string>();
-        allKyc.forEach((k: any) => { kycByUser.set(k.user_id || k.userId, k.status); });
+      // KYC status per user
+      const kycByUser = new Map<string, string>();
+      allKyc.forEach(k => { kycByUser.set(k.userId, k.status); });
 
-        const mappedUsers: AdminUser[] = allUsers.map((u: any) => {
-          const accounts = accountsByUser.get(u.id) || [];
-          const primary = accounts.find((a: any) => a.is_primary || a.isPrimary) || accounts[0];
-          return {
-            id: u.id,
-            name: u.full_name || u.fullName || (u.email || 'unknown').split('@')[0] || 'User',
-            email: u.email || 'unknown',
-            balanceCents: Number(primary?.balance_cents || primary?.balanceCents || 0),
-            accounts: accounts.map((a: any) => ({
-              id: a.id, name: a.name, currency: a.currency,
-              balance_cents: Number(a.balance_cents || a.balanceCents || 0),
-              is_primary: a.is_primary ?? a.isPrimary ?? false,
-            })),
-            frozen: u.frozen ?? false,
-            kycStatus: kycByUser.get(u.id) || 'not_started',
-            createdAt: u.created_at || u.createdAt || new Date().toISOString(),
-          };
-        });
+      const mappedUsers: AdminUser[] = allUsers.map(u => {
+        const accounts = accountsByUser.get(u.id) || [];
+        const primary = accounts.find(a => a.isPrimary) || accounts[0];
+        return {
+          id: u.id,
+          name: u.fullName || u.email?.split('@')[0] || 'User',
+          email: u.email || 'unknown',
+          balanceCents: primary?.balanceCents || 0,
+          accounts: accounts.map(a => ({
+            id: a.id, name: a.name, currency: a.currency,
+            balance_cents: a.balanceCents, is_primary: a.isPrimary,
+          })),
+          frozen: u.frozen ?? false,
+          kycStatus: kycByUser.get(u.id) || 'not_started',
+          createdAt: u.createdAt,
+        };
+      });
 
-        setUsers(mappedUsers);
-        setKycRows(allKyc.map((k: any) => ({ ...k, userId: k.user_id || k.userId, documentType: k.document_type || k.documentType, documentCountry: k.document_country || k.documentCountry, submittedAt: k.submitted_at || k.submittedAt })));
-        setTransactions(allTx.map((t: any) => ({ ...t, userId: t.user_id || t.userId, accountId: t.account_id || t.accountId, amountCents: Number(t.amount_cents || t.amountCents || 0), counterpartyName: t.counterparty_name, counterpartyIban: t.counterparty_iban, createdAt: t.created_at || t.createdAt })));
-        setLogs(allLogs.map((l: any) => ({ ...l, adminEmail: l.admin_email || l.adminEmail, targetEmail: l.target_email || l.targetEmail, createdAt: l.created_at || l.createdAt })));
-        setLoading(false);
-      } catch (e: any) {
-        toast.error('Failed to load data: ' + e.message);
-        setLoading(false);
-      }
-    })();
+      setUsers(mappedUsers);
+      setKycRows(allKyc);
+      setTransactions(allTx);
+      setLogs(allLogs);
+      setLoading(false);
+    }, 200);
   };
 
   useEffect(() => { loadData(); }, []);
@@ -138,15 +119,13 @@ export default function Admin() {
   }, [users, transactions, kycRows]);
 
   // ---- handlers ----
-  const handleAddMoney = async () => {
+  const handleAddMoney = () => {
     if (!selectedUserId) return;
     const numAmount = Number(amount);
     if (!Number.isFinite(numAmount) || numAmount <= 0) { toast.error('Enter a valid amount'); return; }
     const targetUser = getUserById(selectedUserId);
     const primary = getPrimaryAccount(selectedUserId);
-    const primaryData = await primary;
-    const targetData = await targetUser;
-    if (!primaryData || !targetData) { toast.error('User or account not found'); return; }
+    if (!primary || !targetUser) { toast.error('User or account not found'); return; }
 
     const centsAmt = Math.round(numAmount * 100);
     let newBalance: number;
@@ -156,21 +135,17 @@ export default function Admin() {
       if (newBalance < 0) { toast.error('Insufficient balance'); return; }
     } else newBalance = centsAmt;
 
-    // Fallback to localStorage mutation
-    try { await apiUpdateBalance(primary.id, newBalance); } catch {}
-    localUpdateBalance(primary.id, newBalance);
+    updateBalance(primary.id, newBalance);
     const direction = adjustMode === 'debit_balance' ? 'debit' : 'credit';
     const effectiveAmount = adjustMode === 'set_balance' ? Math.abs(newBalance - primary.balanceCents) : centsAmt;
     if (effectiveAmount > 0) {
-      try { await apiAddTransaction({ userId: selectedUserId, accountId: primary.id, direction, amountCents: effectiveAmount, currency: primary.currency, description: reason || 'Admin balance adjustment', category: 'Admin', status: 'completed' }); } catch {}
-      localAddTransaction({
+      addTransaction({
         userId: selectedUserId, accountId: primary.id, direction,
         amountCents: effectiveAmount, currency: primary.currency,
         description: reason || 'Admin balance adjustment', category: 'Admin', status: 'completed',
-      } as any);
+      });
     }
-    try { await apiAddAuditLog({ action: adjustMode, adminEmail: 'admin@agribank.com', targetEmail: targetUser.email, amount: centsAmt, reason }); } catch {}
-    localAddAuditLog({ action: adjustMode, adminEmail: 'admin@agribank.com', targetEmail: targetUser.email, amount: centsAmt, reason });
+    addAuditLog({ action: adjustMode, adminEmail: 'admin@agribank.com', targetEmail: targetUser.email, amount: centsAmt, reason });
     toast.success('Balance updated');
     setAmount(''); setSelectedUserId(null);
     loadData();
@@ -179,9 +154,7 @@ export default function Admin() {
   const handleFreezeToggle = (userId: string) => {
     const user = toggleUserFreeze(userId);
     if (!user) { toast.error('User not found'); return; }
-    try { apiToggleFreeze(userId); } catch {}
-    localAddAuditLog({ action: user.frozen ? 'freeze_account' : 'unfreeze_account', adminEmail: 'admin@agribank.com', targetEmail: user.email, amount: 0, reason: user.frozen ? 'Account frozen' : 'Account unfrozen' });
-    try { apiAddAuditLog({ action: user.frozen ? 'freeze_account' : 'unfreeze_account', adminEmail: 'admin@agribank.com', targetEmail: user.email, amount: 0, reason: user.frozen ? 'Account frozen' : 'Account unfrozen' }); } catch {}
+    addAuditLog({ action: user.frozen ? 'freeze_account' : 'unfreeze_account', adminEmail: 'admin@agribank.com', targetEmail: user.email, amount: 0, reason: user.frozen ? 'Account frozen' : 'Account unfrozen' });
     toast.success(user.frozen ? 'Account frozen' : 'Account unfrozen');
     loadData();
   };
@@ -190,30 +163,26 @@ export default function Admin() {
     const target = getUserById(userId);
     if (!target) return;
     if (!confirm(`Delete user ${target.email} and all their data? This cannot be undone.`)) return;
-    try { apiDeleteUser(userId); } catch {}
     deleteUser(userId);
-    localAddAuditLog({ action: 'delete_user', adminEmail: 'admin@agribank.com', targetEmail: target.email, amount: 0, reason: 'Admin deleted user' });
-    try { apiAddAuditLog({ action: 'delete_user', adminEmail: 'admin@agribank.com', targetEmail: target.email, amount: 0, reason: 'Admin deleted user' }); } catch {}
+    addAuditLog({ action: 'delete_user', adminEmail: 'admin@agribank.com', targetEmail: target.email, amount: 0, reason: 'Admin deleted user' });
     toast.success('User deleted');
     setSelectedUserId(null);
     loadData();
   };
 
   const handleKycDecision = (kycId: string, userId: string, decision: 'verified' | 'rejected') => {
-    try { apiUpdateKyc(kycId, decision); } catch {}
     updateKycStatus(kycId, decision);
     const target = getUserById(userId);
-    localAddAuditLog({
+    addAuditLog({
       action: decision === 'verified' ? 'approve_kyc' : 'reject_kyc',
       adminEmail: 'admin@agribank.com', targetEmail: target?.email || null,
       amount: 0, reason: decision === 'verified' ? 'KYC approved' : 'KYC rejected',
     });
-    try { apiAddAuditLog({ action: decision === 'verified' ? 'approve_kyc' : 'reject_kyc', adminEmail: 'admin@agribank.com', targetEmail: target?.email || null, amount: 0, reason: decision === 'verified' ? 'KYC approved' : 'KYC rejected' }); } catch {}
     toast.success(decision === 'verified' ? 'KYC approved' : 'KYC rejected');
     loadData();
   };
 
-  const handleCreateManualTransaction = async () => {
+  const handleCreateManualTransaction = () => {
     if (!selectedUser) { toast.error('Select a user first'); return; }
     const amountNum = Number(txAmount);
     if (!Number.isFinite(amountNum) || amountNum <= 0) { toast.error('Enter valid amount'); return; }
@@ -221,21 +190,18 @@ export default function Admin() {
     if (!account) { toast.error('No account found'); return; }
 
     const centsAmt = Math.round(amountNum * 100);
-    try { await apiAddTransaction({ userId: selectedUser.id, accountId: account.id, direction: txDirection, amountCents: centsAmt, currency: account.currency, description: txDescription, category: 'Manual', status: txStatus }); } catch {}
-    localAddTransaction({
+    addTransaction({
       userId: selectedUser.id, accountId: account.id, direction: txDirection,
       amountCents: centsAmt, currency: account.currency,
       description: txDescription, category: 'Manual', status: txStatus,
-    } as any);
+    });
     if (txApplyBalance) {
       const delta = txDirection === 'credit' ? centsAmt : -centsAmt;
       const newBal = account.balance_cents + delta;
       if (newBal < 0) { toast.error('Balance cannot go negative'); return; }
-      try { await apiUpdateBalance(account.id, newBal); } catch {}
-      localUpdateBalance(account.id, newBal);
+      updateBalance(account.id, newBal);
     }
-    localAddAuditLog({ action: 'create_transaction', adminEmail: 'admin@agribank.com', targetEmail: selectedUser.email, amount: centsAmt, reason: txDescription });
-    try { await apiAddAuditLog({ action: 'create_transaction', adminEmail: 'admin@agribank.com', targetEmail: selectedUser.email, amount: centsAmt, reason: txDescription }); } catch {}
+    addAuditLog({ action: 'create_transaction', adminEmail: 'admin@agribank.com', targetEmail: selectedUser.email, amount: centsAmt, reason: txDescription });
     toast.success('Transaction created');
     setTxAmount('');
     loadData();
@@ -243,7 +209,7 @@ export default function Admin() {
 
   const handleUpdateTransactionStatus = (tx: MockTransaction, nextStatus: 'pending' | 'completed' | 'failed') => {
     updateTransactionStatus(tx.id, nextStatus);
-    localAddAuditLog({ action: 'update_transaction_status', adminEmail: 'admin@agribank.com', targetEmail: null, amount: 0, reason: `Status → ${nextStatus}` });
+    addAuditLog({ action: 'update_transaction_status', adminEmail: 'admin@agribank.com', targetEmail: null, amount: 0, reason: `Status → ${nextStatus}` });
     toast.success('Updated');
     loadData();
   };

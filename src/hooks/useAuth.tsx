@@ -45,12 +45,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!email.trim() || password.length < 8) {
       throw new Error("Enter a valid email and password (min 8 chars)");
     }
-    // Use centralized mock store — creates profile + account + welcome bonus
-    const newUser: MockUser = registerUser(email, password, fullName);
-    const loggedInUser: LocalUser = {
-      id: newUser.id,
-      email: newUser.email,
-    };
+    const newUser = await registerUser(email, password, fullName);
+    const loggedInUser: LocalUser = { id: newUser.id, email: newUser.email };
     localStorage.setItem("localAuthUser", JSON.stringify(loggedInUser));
     setUser(loggedInUser);
   };
@@ -59,12 +55,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!email.trim() || password.length < 4) {
       throw new Error("Enter a valid email and password");
     }
-    // Authenticate against mock store
-    const foundUser: MockUser = signInUser(email, password);
-    const loggedInUser: LocalUser = {
-      id: foundUser.id,
-      email: foundUser.email,
-    };
+    const foundUser = await signInUser(email, password);
+    const loggedInUser: LocalUser = { id: foundUser.id, email: foundUser.email };
     localStorage.setItem("localAuthUser", JSON.stringify(loggedInUser));
     setUser(loggedInUser);
   };

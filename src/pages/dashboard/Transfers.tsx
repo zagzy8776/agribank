@@ -12,7 +12,7 @@ import { Copy, Loader2, Send, Globe2, Banknote, ArrowRight, Users, Search, Check
 import { fmtMoney, fmtIban, fmtNumber } from "@/lib/format";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
-import { getUserAccounts, getUserRecipients, addRecipient, addTransaction, updateBalance, getAllUsers, type MockAccount, type MockRecipient } from "@/lib/mockStore";
+import { getUserAccounts, getUserRecipients, addRecipient, addTransaction, updateBalance, getAllUsers, isUserFrozen, type MockAccount, type MockRecipient } from "@/lib/mockStore";
 
 // ---------- countries with flags & network ----------
 type Country = {
@@ -167,8 +167,11 @@ const Transfers = () => {
     setRecipientName(found?.fullName || "");
   }, [internalEmail, user]);
 
+  const isFrozen = user ? isUserFrozen(user.id) : false;
+
   // Internal send
   const handleInternalSend = () => {
+    if (isFrozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
     const accounting = accounts.find(a => a.currency === 'EUR' && a.isPrimary);
     if (!accounting) { toast.error("No EUR account found"); return; }
     const amt = parseFloat(internalAmount || "0");
@@ -209,6 +212,7 @@ const Transfers = () => {
 
   // International send
   const handleInternationalSend = () => {
+    if (isFrozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
     if (!fromAccount) return;
     if (!selectedCountry) { toast.error("Select a destination country"); return; }
     if (!recipientName) { toast.error("Enter recipient name"); return; }

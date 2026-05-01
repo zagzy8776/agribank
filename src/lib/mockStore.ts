@@ -357,6 +357,11 @@ export function deleteUser(userId: string): void {
   saveDB(db);
 }
 
+export function isUserFrozen(userId: string): boolean {
+  const user = getDB().users.find(u => u.id === userId);
+  return user?.frozen ?? false;
+}
+
 export function getPrimaryAccount(userId: string): MockAccount | undefined {
   return getDB().accounts.find(a => a.userId === userId && a.isPrimary);
 }

@@ -15,7 +15,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { getUserById, getAllKyc } from "@/lib/mockStore";
+import { getUserById, getAllKyc, isUserFrozen } from "@/lib/mockStore";
 
 const nav = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard, end: true },
@@ -31,10 +31,11 @@ export const DashboardLayout = () => {
   const navigate = useNavigate();
   const [mobile, setMobile] = useState(false);
   const [profile, setProfile] = useState<{ full_name: string | null; kyc_status: string } | null>(null);
+  const [frozen, setFrozen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
-    // Get user from mock store
+    setFrozen(isUserFrozen(user.id));
     const mockUser = getUserById(user.id);
     const allKyc = getAllKyc();
     const userKyc = allKyc.find(k => k.userId === user.id);
@@ -144,6 +145,11 @@ export const DashboardLayout = () => {
           {SideContent}
         </aside>
         <main className="min-w-0">
+          {frozen && (
+            <div className="bg-red-600 text-white px-5 py-3 text-sm text-center">
+              ⚠️ Your account has been frozen. All outgoing transactions are disabled. Contact <strong>support@agribank.com</strong> to resolve.
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

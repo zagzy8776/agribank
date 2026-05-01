@@ -213,7 +213,7 @@ export default function Admin() {
     loadData();
   };
 
-  const handleCreateManualTransaction = () => {
+  const handleCreateManualTransaction = async () => {
     if (!selectedUser) { toast.error('Select a user first'); return; }
     const amountNum = Number(txAmount);
     if (!Number.isFinite(amountNum) || amountNum <= 0) { toast.error('Enter valid amount'); return; }

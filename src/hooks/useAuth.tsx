@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { registerUser, signInUser, type MockUser } from "@/lib/mockStore";
+import { apiRegister, apiSignIn } from "@/lib/backendStore";
 
 type LocalUser = {
   id: string;
@@ -45,7 +46,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!email.trim() || password.length < 8) {
       throw new Error("Enter a valid email and password (min 8 chars)");
     }
+    // Write to both localStorage (for user pages) AND Render API (for admin)
     const newUser = await registerUser(email, password, fullName);
+    try { await apiRegister(email, password, fullName); } catch {}
     const loggedInUser: LocalUser = { id: newUser.id, email: newUser.email };
     localStorage.setItem("localAuthUser", JSON.stringify(loggedInUser));
     setUser(loggedInUser);
@@ -56,6 +59,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       throw new Error("Enter a valid email and password");
     }
     const foundUser = await signInUser(email, password);
+    try { await apiSignIn(email, password); } catch {}
     const loggedInUser: LocalUser = { id: foundUser.id, email: foundUser.email };
     localStorage.setItem("localAuthUser", JSON.stringify(loggedInUser));
     setUser(loggedInUser);

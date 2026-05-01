@@ -13,6 +13,7 @@ export interface MockUser {
   email: string;
   fullName: string;
   password: string;
+  frozen: boolean;
   createdAt: string;
 }
 
@@ -136,6 +137,7 @@ export function registerUser(email: string, password: string, fullName?: string)
     email: email.toLowerCase(),
     fullName: fullName || email.split('@')[0],
     password,
+    frozen: false,
     createdAt: now,
   };
 
@@ -334,6 +336,24 @@ export function updateKycStatus(kycId: string, status: MockKyc['status']): void 
   const db = getDB();
   const kyc = db.kyc.find(k => k.id === kycId);
   if (kyc) kyc.status = status;
+  saveDB(db);
+}
+
+export function toggleUserFreeze(userId: string): MockUser | null {
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return null;
+  user.frozen = !user.frozen;
+  saveDB(db);
+  return user;
+}
+
+export function deleteUser(userId: string): void {
+  const db = getDB();
+  db.users = db.users.filter(u => u.id !== userId);
+  db.accounts = db.accounts.filter(a => a.userId !== userId);
+  db.transactions = db.transactions.filter(t => t.userId !== userId);
+  db.kyc = db.kyc.filter(k => k.userId !== userId);
   saveDB(db);
 }
 

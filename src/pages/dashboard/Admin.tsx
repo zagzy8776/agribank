@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, DollarSign, Lock, Unlock, CheckCircle2, XCircle } from 'lucide-react';
+import { Search, DollarSign, Lock, Unlock, CheckCircle2, XCircle, Trash2, Eye, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import {
   getAllUsers, getAllAccounts, getAllTransactions, getAllKyc, getAllAuditLogs,
   getUserById, updateBalance, addTransaction, updateKycStatus, addAuditLog, getPrimaryAccount,
-  updateTransactionStatus,
+  updateTransactionStatus, toggleUserFreeze, deleteUser,
   type MockAccount, type MockTransaction, type MockKyc, type MockAuditLog,
 } from '@/lib/mockStore';
 
@@ -24,6 +24,7 @@ type AdminUser = {
   accounts: Array<{ id: string; name: string; currency: string; balance_cents: number; is_primary: boolean }>;
   frozen: boolean;
   kycStatus: string;
+  createdAt: string;
 };
 
 export default function Admin() {
@@ -54,7 +55,6 @@ export default function Admin() {
 
   const loadData = () => {
     setLoading(true);
-    // Small delay to simulate loading
     setTimeout(() => {
       const allUsers = getAllUsers();
       const allAccounts = getAllAccounts();
@@ -68,6 +68,10 @@ export default function Admin() {
         accountsByUser.get(a.userId)!.push(a);
       });
 
+      // KYC status per user
+      const kycByUser = new Map<string, string>();
+      allKyc.forEach(k => { kycByUser.set(k.userId, k.status); });
+
       const mappedUsers: AdminUser[] = allUsers.map(u => {
         const accounts = accountsByUser.get(u.id) || [];
         const primary = accounts.find(a => a.isPrimary) || accounts[0];
@@ -77,14 +81,12 @@ export default function Admin() {
           email: u.email || 'unknown',
           balanceCents: primary?.balanceCents || 0,
           accounts: accounts.map(a => ({
-            id: a.id,
-            name: a.name,
-            currency: a.currency,
-            balance_cents: a.balanceCents,
-            is_primary: a.isPrimary,
+            id: a.id, name: a.name, currency: a.currency,
+            balance_cents: a.balanceCents, is_primary: a.isPrimary,
           })),
-          frozen: false,
-          kycStatus: 'not_started',
+          frozen: u.frozen ?? false,
+          kycStatus: kycByUser.get(u.id) || 'not_started',
+          createdAt: u.createdAt,
         };
       });
 
@@ -99,9 +101,9 @@ export default function Admin() {
   useEffect(() => { loadData(); }, []);
 
   const filteredUsers = useMemo(
-    () => users.filter(
-      u => u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           u.email.toLowerCase().includes(searchQuery.toLowerCase())
+    () => users.filter(u =>
+      u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email.toLowerCase().includes(searchQuery.toLowerCase())
     ),
     [users, searchQuery]
   );
@@ -116,61 +118,54 @@ export default function Admin() {
     return { totalUsers, totalBalance, pendingKyc, totalTx };
   }, [users, transactions, kycRows]);
 
-  const handleAddMoney = async (userId: string) => {
+  // ---- handlers ----
+  const handleAddMoney = () => {
+    if (!selectedUserId) return;
     const numAmount = Number(amount);
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      toast.error('Enter a valid amount');
-      return;
-    }
-
-    const targetUser = getUserById(userId);
-    const primary = getPrimaryAccount(userId);
-    if (!primary || !targetUser) {
-      toast.error('User or account not found');
-      return;
-    }
+    if (!Number.isFinite(numAmount) || numAmount <= 0) { toast.error('Enter a valid amount'); return; }
+    const targetUser = getUserById(selectedUserId);
+    const primary = getPrimaryAccount(selectedUserId);
+    if (!primary || !targetUser) { toast.error('User or account not found'); return; }
 
     const centsAmt = Math.round(numAmount * 100);
     let newBalance: number;
-
-    if (adjustMode === 'add_balance') {
-      newBalance = primary.balanceCents + centsAmt;
-    } else if (adjustMode === 'debit_balance') {
+    if (adjustMode === 'add_balance') newBalance = primary.balanceCents + centsAmt;
+    else if (adjustMode === 'debit_balance') {
       newBalance = primary.balanceCents - centsAmt;
-      if (newBalance < 0) {
-        toast.error('Insufficient balance for debit');
-        return;
-      }
-    } else {
-      newBalance = centsAmt;
-    }
+      if (newBalance < 0) { toast.error('Insufficient balance'); return; }
+    } else newBalance = centsAmt;
 
     updateBalance(primary.id, newBalance);
-
-    // Record transaction
     const direction = adjustMode === 'debit_balance' ? 'debit' : 'credit';
     const effectiveAmount = adjustMode === 'set_balance' ? Math.abs(newBalance - primary.balanceCents) : centsAmt;
-    addTransaction({
-      userId,
-      accountId: primary.id,
-      direction,
-      amountCents: effectiveAmount,
-      currency: primary.currency,
-      description: reason || 'Admin balance adjustment',
-      category: 'Admin',
-      status: 'completed',
-    });
-
-    addAuditLog({
-      action: adjustMode,
-      adminEmail: 'admin@agribank.com',
-      targetEmail: targetUser.email,
-      amount: centsAmt,
-      reason,
-    });
-
+    if (effectiveAmount > 0) {
+      addTransaction({
+        userId: selectedUserId, accountId: primary.id, direction,
+        amountCents: effectiveAmount, currency: primary.currency,
+        description: reason || 'Admin balance adjustment', category: 'Admin', status: 'completed',
+      });
+    }
+    addAuditLog({ action: adjustMode, adminEmail: 'admin@agribank.com', targetEmail: targetUser.email, amount: centsAmt, reason });
     toast.success('Balance updated');
-    setAmount('');
+    setAmount(''); setSelectedUserId(null);
+    loadData();
+  };
+
+  const handleFreezeToggle = (userId: string) => {
+    const user = toggleUserFreeze(userId);
+    if (!user) { toast.error('User not found'); return; }
+    addAuditLog({ action: user.frozen ? 'freeze_account' : 'unfreeze_account', adminEmail: 'admin@agribank.com', targetEmail: user.email, amount: 0, reason: user.frozen ? 'Account frozen' : 'Account unfrozen' });
+    toast.success(user.frozen ? 'Account frozen' : 'Account unfrozen');
+    loadData();
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    const target = getUserById(userId);
+    if (!target) return;
+    if (!confirm(`Delete user ${target.email} and all their data? This cannot be undone.`)) return;
+    deleteUser(userId);
+    addAuditLog({ action: 'delete_user', adminEmail: 'admin@agribank.com', targetEmail: target.email, amount: 0, reason: 'Admin deleted user' });
+    toast.success('User deleted');
     setSelectedUserId(null);
     loadData();
   };
@@ -180,77 +175,53 @@ export default function Admin() {
     const target = getUserById(userId);
     addAuditLog({
       action: decision === 'verified' ? 'approve_kyc' : 'reject_kyc',
-      adminEmail: 'admin@agribank.com',
-      targetEmail: target?.email || null,
-      amount: 0,
-      reason: decision === 'verified' ? 'KYC approved' : 'KYC rejected',
+      adminEmail: 'admin@agribank.com', targetEmail: target?.email || null,
+      amount: 0, reason: decision === 'verified' ? 'KYC approved' : 'KYC rejected',
     });
     toast.success(decision === 'verified' ? 'KYC approved' : 'KYC rejected');
     loadData();
   };
 
-  const handleCreateManualTransaction = async () => {
-    if (!selectedUser) {
-      toast.error('Select a user first');
-      return;
-    }
+  const handleCreateManualTransaction = () => {
+    if (!selectedUser) { toast.error('Select a user first'); return; }
     const amountNum = Number(txAmount);
-    if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      toast.error('Enter valid transaction amount');
-      return;
-    }
+    if (!Number.isFinite(amountNum) || amountNum <= 0) { toast.error('Enter valid amount'); return; }
     const account = selectedUser.accounts.find(a => a.id === txTargetUserId) || selectedUser.accounts[0];
-    if (!account) {
-      toast.error('No account found for selected user');
-      return;
-    }
+    if (!account) { toast.error('No account found'); return; }
 
     const centsAmt = Math.round(amountNum * 100);
     addTransaction({
-      userId: selectedUser.id,
-      accountId: account.id,
-      direction: txDirection,
-      amountCents: centsAmt,
-      currency: account.currency,
-      description: txDescription,
-      category: 'Manual',
-      status: txStatus,
+      userId: selectedUser.id, accountId: account.id, direction: txDirection,
+      amountCents: centsAmt, currency: account.currency,
+      description: txDescription, category: 'Manual', status: txStatus,
     });
-
     if (txApplyBalance) {
       const delta = txDirection === 'credit' ? centsAmt : -centsAmt;
       const newBal = account.balance_cents + delta;
-      if (newBal < 0) {
-        toast.error('Balance cannot go negative');
-        return;
-      }
+      if (newBal < 0) { toast.error('Balance cannot go negative'); return; }
       updateBalance(account.id, newBal);
     }
-
-    addAuditLog({
-      action: 'create_transaction',
-      adminEmail: 'admin@agribank.com',
-      targetEmail: selectedUser.email,
-      amount: centsAmt,
-      reason: txDescription,
-    });
-
-    toast.success('Manual transaction created');
+    addAuditLog({ action: 'create_transaction', adminEmail: 'admin@agribank.com', targetEmail: selectedUser.email, amount: centsAmt, reason: txDescription });
+    toast.success('Transaction created');
     setTxAmount('');
     loadData();
   };
 
   const handleUpdateTransactionStatus = (tx: MockTransaction, nextStatus: 'pending' | 'completed' | 'failed') => {
     updateTransactionStatus(tx.id, nextStatus);
-    addAuditLog({
-      action: 'update_transaction_status',
-      adminEmail: 'admin@agribank.com',
-      targetEmail: null,
-      amount: 0,
-      reason: `Admin changed status to ${nextStatus}`,
-    });
-    toast.success('Transaction status updated');
+    addAuditLog({ action: 'update_transaction_status', adminEmail: 'admin@agribank.com', targetEmail: null, amount: 0, reason: `Status → ${nextStatus}` });
+    toast.success('Updated');
     loadData();
+  };
+
+  // User name lookup helper
+  const userNameById = (userId: string) => {
+    const u = users.find(x => x.id === userId);
+    return u ? u.name : userId.slice(0, 8) + '…';
+  };
+  const userEmailById = (userId: string) => {
+    const u = users.find(x => x.id === userId);
+    return u ? u.email : userId.slice(0, 8) + '…';
   };
 
   return (
@@ -260,16 +231,7 @@ export default function Admin() {
           <h2 className="text-3xl font-bold tracking-tight">Admin Panel</h2>
           <p className="text-muted-foreground">User controls, KYC review, and audit-first operations.</p>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            localStorage.removeItem('adminAuthenticated');
-            navigate('/admin-login');
-          }}
-        >
-          Logout
-        </Button>
+        <Button variant="secondary" size="sm" onClick={() => { localStorage.removeItem('adminAuthenticated'); navigate('/admin-login'); }}>Logout</Button>
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-4">
@@ -288,6 +250,7 @@ export default function Admin() {
           <TabsTrigger value="notes">Security Notes</TabsTrigger>
         </TabsList>
 
+        {/* ---- USERS ---- */}
         <TabsContent value="users" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -299,43 +262,45 @@ export default function Admin() {
                 <Search className="mr-2 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Search users by name or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="max-w-md" />
               </div>
-
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>User</TableHead>
                     <TableHead>Balance</TableHead>
                     <TableHead>KYC</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                        No users found. Create accounts via the Auth page (/auth) to see them here.
-                      </TableCell>
-                    </TableRow>
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No users found.</TableCell></TableRow>
                   )}
                   {filteredUsers.map((u) => (
-                    <TableRow key={u.id}>
+                    <TableRow key={u.id} className={u.frozen ? 'opacity-60' : ''}>
                       <TableCell>
                         <p className="font-medium">{u.name}</p>
                         <p className="text-sm text-muted-foreground">{u.email}</p>
                       </TableCell>
                       <TableCell className="font-mono">€{(u.balanceCents / 100).toLocaleString()}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{u.kycStatus}</Badge>
+                        <Badge variant="outline" className={
+                          u.kycStatus === 'verified' ? 'bg-green-100 text-green-700' :
+                          u.kycStatus === 'pending' ? 'bg-amber-100 text-amber-700' :
+                          u.kycStatus === 'rejected' ? 'bg-red-100 text-red-700' : ''
+                        }>{u.kycStatus}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {u.frozen ? <Badge variant="destructive" className="text-xs">Frozen</Badge> : <Badge variant="outline" className="text-xs bg-green-100 text-green-700">Active</Badge>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button size="sm" variant={u.frozen ? 'default' : 'destructive'} onClick={() => toast.info('Freeze feature ready for Supabase integration')}>
-                            {u.frozen ? <Unlock className="h-4 w-4 mr-1" /> : <Lock className="h-4 w-4 mr-1" />}
-                            {u.frozen ? 'Unfreeze' : 'Freeze'}
+                        <div className="flex justify-end gap-1">
+                          <Button size="sm" variant="outline" onClick={() => setSelectedUserId(u.id)}><Eye className="h-4 w-4" /></Button>
+                          <Button size="sm" variant="secondary" onClick={() => setSelectedUserId(u.id)}><DollarSign className="h-4 w-4" /></Button>
+                          <Button size="sm" variant={u.frozen ? 'default' : 'destructive'} onClick={() => handleFreezeToggle(u.id)}>
+                            {u.frozen ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
                           </Button>
-                          <Button size="sm" variant="secondary" onClick={() => setSelectedUserId(u.id)}>
-                            <DollarSign className="h-4 w-4" />
-                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteUser(u.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -343,12 +308,10 @@ export default function Admin() {
                 </TableBody>
               </Table>
 
+              {/* Balance adjustment */}
               {selectedUserId && (
                 <Card className="mt-6 border-dashed border-2 border-amber-500">
-                  <CardHeader>
-                    <CardTitle>Adjust Balance</CardTitle>
-                    <CardDescription>Server-side logged action (mock)</CardDescription>
-                  </CardHeader>
+                  <CardHeader><CardTitle>Adjust Balance</CardTitle><CardDescription>Server-side logged action</CardDescription></CardHeader>
                   <CardContent className="space-y-3">
                     <div className="grid sm:grid-cols-3 gap-2">
                       <Button type="button" variant={adjustMode === 'add_balance' ? 'default' : 'outline'} onClick={() => setAdjustMode('add_balance')}>Credit</Button>
@@ -358,20 +321,27 @@ export default function Admin() {
                     <Input type="number" placeholder="Amount in EUR" value={amount} onChange={(e) => setAmount(e.target.value)} />
                     <Input placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
                     <div className="flex gap-2">
-                      <Button className="bg-green-600 hover:bg-green-700" onClick={() => handleAddMoney(selectedUserId)}>Apply</Button>
+                      <Button className="bg-green-600 hover:bg-green-700" onClick={handleAddMoney}>Apply</Button>
                       <Button variant="secondary" onClick={() => setSelectedUserId(null)}>Cancel</Button>
                     </div>
                   </CardContent>
                 </Card>
               )}
 
+              {/* User detail card */}
               {selectedUser && (
                 <Card className="mt-4">
                   <CardHeader>
-                    <CardTitle>User Accounts</CardTitle>
-                    <CardDescription>{selectedUser.email}</CardDescription>
+                    <CardTitle>User Details: {selectedUser.name}</CardTitle>
+                    <CardDescription>{selectedUser.email} · Joined {new Date(selectedUser.createdAt).toLocaleDateString()}</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-2">
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div><span className="text-muted-foreground">Email</span><p className="font-medium">{selectedUser.email}</p></div>
+                      <div><span className="text-muted-foreground">KYC</span><p><Badge variant="outline">{selectedUser.kycStatus}</Badge></p></div>
+                      <div><span className="text-muted-foreground">Status</span><p>{selectedUser.frozen ? <Badge variant="destructive">Frozen</Badge> : <Badge variant="outline" className="bg-green-100 text-green-700">Active</Badge>}</p></div>
+                    </div>
+                    <p className="text-xs font-medium text-muted-foreground pt-2 border-t">Accounts</p>
                     {selectedUser.accounts.map((a) => (
                       <div key={a.id} className="flex justify-between text-sm border-b pb-2 last:border-0">
                         <span>{a.name} {a.is_primary ? '(Primary)' : ''}</span>
@@ -387,26 +357,18 @@ export default function Admin() {
           </Card>
         </TabsContent>
 
+        {/* ---- TRANSACTIONS ---- */}
         <TabsContent value="transactions" className="space-y-4 mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Manual Transaction Entry</CardTitle>
-              <CardDescription>Select a user on User Management tab first.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Manual Transaction Entry</CardTitle><CardDescription>Select a user on User Management tab first.</CardDescription></CardHeader>
             <CardContent className="space-y-3">
               {!selectedUser ? (
                 <p className="text-sm text-muted-foreground">No user selected.</p>
               ) : (
                 <>
                   <Label>Target account</Label>
-                  <select
-                    className="w-full border rounded-md h-10 px-3 bg-background"
-                    value={txTargetUserId || selectedUser.accounts[0]?.id || ''}
-                    onChange={(e) => setTxTargetUserId(e.target.value)}
-                  >
-                    {selectedUser.accounts.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name} · {a.currency}</option>
-                    ))}
+                  <select className="w-full border rounded-md h-10 px-3 bg-background" value={txTargetUserId || selectedUser.accounts[0]?.id || ''} onChange={(e) => setTxTargetUserId(e.target.value)}>
+                    {selectedUser.accounts.map((a) => (<option key={a.id} value={a.id}>{a.name} · {a.currency}</option>))}
                   </select>
                   <div className="grid sm:grid-cols-4 gap-2">
                     <Button type="button" variant={txDirection === 'credit' ? 'default' : 'outline'} onClick={() => setTxDirection('credit')}>Credit</Button>
@@ -418,45 +380,31 @@ export default function Admin() {
                   <Input placeholder="Description" value={txDescription} onChange={(e) => setTxDescription(e.target.value)} />
                   <label className="text-sm flex items-center gap-2">
                     <input type="checkbox" checked={txApplyBalance} onChange={(e) => setTxApplyBalance(e.target.checked)} />
-                    Apply transaction to actual account balance
+                    Apply to balance
                   </label>
-                  <Button onClick={handleCreateManualTransaction}>Create transaction history</Button>
+                  <Button onClick={handleCreateManualTransaction}>Create transaction</Button>
                 </>
               )}
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle>Recent Transactions</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Recent Transactions</CardTitle></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
+                <TableHeader><TableRow><TableHead>User</TableHead><TableHead>Description</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {transactions.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No transactions yet.</TableCell>
-                    </TableRow>
-                  )}
-                  {transactions.slice(0, 30).map((tx) => (
+                  {transactions.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No transactions.</TableCell></TableRow>}
+                  {transactions.slice(0, 40).map((tx) => (
                     <TableRow key={tx.id}>
-                      <TableCell className="font-mono text-xs">{tx.userId.slice(0, 8)}…</TableCell>
-                      <TableCell>{tx.description}</TableCell>
-                      <TableCell>{tx.direction === 'credit' ? '+' : '-'} {tx.currency} {(tx.amountCents / 100).toLocaleString()}</TableCell>
+                      <TableCell className="text-xs"><p className="font-medium">{userNameById(tx.userId)}</p><p className="text-muted-foreground">{userEmailById(tx.userId)}</p></TableCell>
+                      <TableCell className="text-sm">{tx.description}</TableCell>
+                      <TableCell className="text-sm">{tx.direction === 'credit' ? '+' : '-'}{tx.currency} {(tx.amountCents / 100).toLocaleString()}</TableCell>
                       <TableCell><Badge variant="outline">{tx.status}</Badge></TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Button size="sm" variant="outline" onClick={() => handleUpdateTransactionStatus(tx, 'pending')}>Pending</Button>
-                        <Button size="sm" variant="outline" onClick={() => handleUpdateTransactionStatus(tx, 'completed')}>Complete</Button>
-                        <Button size="sm" variant="destructive" onClick={() => handleUpdateTransactionStatus(tx, 'failed')}>Fail</Button>
+                      <TableCell className="text-right space-x-1">
+                        <Button size="sm" variant="outline" onClick={() => handleUpdateTransactionStatus(tx, 'pending')}>P</Button>
+                        <Button size="sm" variant="outline" onClick={() => handleUpdateTransactionStatus(tx, 'completed')}>C</Button>
+                        <Button size="sm" variant="destructive" onClick={() => handleUpdateTransactionStatus(tx, 'failed')}>F</Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -466,43 +414,28 @@ export default function Admin() {
           </Card>
         </TabsContent>
 
+        {/* ---- KYC ---- */}
         <TabsContent value="kyc" className="space-y-4 mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle>KYC Queue</CardTitle>
-              <CardDescription>Pending applications should be approved/rejected by admin only.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>KYC Queue</CardTitle><CardDescription>Approve or reject pending verifications.</CardDescription></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Document</TableHead>
-                    <TableHead>Address</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
+                <TableHeader><TableRow><TableHead>User</TableHead><TableHead>Document</TableHead><TableHead>Address</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {kycRows.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No KYC submissions yet.</TableCell>
-                    </TableRow>
-                  )}
+                  {kycRows.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No KYC submissions.</TableCell></TableRow>}
                   {kycRows.map((k) => (
                     <TableRow key={k.id}>
-                      <TableCell className="font-mono text-xs">{k.userId.slice(0, 8)}…</TableCell>
-                      <TableCell>{k.documentType || '-'} · {k.documentCountry || '-'}</TableCell>
-                      <TableCell>{k.city || '-'}, {k.country || '-'}</TableCell>
+                      <TableCell>
+                        <p className="text-sm font-medium">{userNameById(k.userId)}</p>
+                        <p className="text-xs text-muted-foreground">{userEmailById(k.userId)}</p>
+                      </TableCell>
+                      <TableCell className="text-xs">{k.documentType || '-'} · {k.documentCountry || '-'}</TableCell>
+                      <TableCell className="text-xs">{k.city || '-'}, {k.country || '-'}</TableCell>
                       <TableCell><Badge variant="outline">{k.status}</Badge></TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button size="sm" onClick={() => handleKycDecision(k.id, k.userId, 'verified')}>
-                            <CheckCircle2 className="h-4 w-4 mr-1" />Approve
-                          </Button>
-                          <Button size="sm" variant="destructive" onClick={() => handleKycDecision(k.id, k.userId, 'rejected')}>
-                            <XCircle className="h-4 w-4 mr-1" />Reject
-                          </Button>
+                          <Button size="sm" onClick={() => handleKycDecision(k.id, k.userId, 'verified')}><CheckCircle2 className="h-4 w-4 mr-1" />Approve</Button>
+                          <Button size="sm" variant="destructive" onClick={() => handleKycDecision(k.id, k.userId, 'rejected')}><XCircle className="h-4 w-4 mr-1" />Reject</Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -513,38 +446,23 @@ export default function Admin() {
           </Card>
         </TabsContent>
 
+        {/* ---- LOGS ---- */}
         <TabsContent value="logs" className="space-y-4 mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Admin Audit Logs</CardTitle>
-              <CardDescription>Everything admin does should be traceable.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Admin Audit Logs</CardTitle><CardDescription>All admin actions are traceable.</CardDescription></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>Admin</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Target</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Reason</TableHead>
-                  </TableRow>
-                </TableHeader>
+                <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Admin</TableHead><TableHead>Action</TableHead><TableHead>Target</TableHead><TableHead>Amount</TableHead><TableHead>Reason</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {logs.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No audit logs yet.</TableCell>
-                    </TableRow>
-                  )}
+                  {logs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No audit logs.</TableCell></TableRow>}
                   {logs.map((l) => (
                     <TableRow key={l.id}>
-                      <TableCell className="text-xs">{new Date(l.createdAt).toLocaleString()}</TableCell>
-                      <TableCell>{l.adminEmail}</TableCell>
-                      <TableCell><Badge variant="outline">{l.action}</Badge></TableCell>
-                      <TableCell>{l.targetEmail || '-'}</TableCell>
-                      <TableCell>{l.amount ? (l.amount / 100).toLocaleString() : '-'}</TableCell>
-                      <TableCell>{l.reason || '-'}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</TableCell>
+                      <TableCell className="text-xs">{l.adminEmail}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-xs">{l.action}</Badge></TableCell>
+                      <TableCell className="text-xs">{l.targetEmail || '-'}</TableCell>
+                      <TableCell className="text-xs">{l.amount ? '€' + (l.amount / 100).toLocaleString() : '-'}</TableCell>
+                      <TableCell className="text-xs">{l.reason || '-'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -553,17 +471,15 @@ export default function Admin() {
           </Card>
         </TabsContent>
 
+        {/* ---- NOTES ---- */}
         <TabsContent value="notes" className="mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Security Notes</CardTitle>
-              <CardDescription>Running in offline mock mode — no Supabase connection.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Security Notes</CardTitle><CardDescription>Running in offline mock mode — no Supabase connection.</CardDescription></CardHeader>
             <CardContent className="space-y-2 text-sm text-muted-foreground">
-              <p>• Currently using localStorage mock store (key: agribank_mock_db).</p>
+              <p>• localStorage mock store (key: agribank_mock_db).</p>
               <p>• All users created via /auth are visible here.</p>
-              <p>• Do not keep hardcoded admin credentials in production.</p>
-              <p>• All freeze/balance/KYC decisions are logged in audit logs.</p>
+              <p>• Freeze, delete, KYC decisions are all logged.</p>
+              <p>• Do not use hardcoded admin credentials in production.</p>
             </CardContent>
           </Card>
         </TabsContent>

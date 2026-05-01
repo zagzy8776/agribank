@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, DollarSign, Lock, Unlock, CheckCircle2, XCircle, Trash2, Eye, Clock } from 'lucide-react';
+import { Search, DollarSign, Lock, Unlock, CheckCircle2, XCircle, Trash2, Eye, Clock, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import {
@@ -231,7 +231,13 @@ export default function Admin() {
           <h2 className="text-3xl font-bold tracking-tight">Admin Panel</h2>
           <p className="text-muted-foreground">User controls, KYC review, and audit-first operations.</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => { localStorage.removeItem('adminAuthenticated'); navigate('/admin-login'); }}>Logout</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => { localStorage.removeItem('adminAuthenticated'); navigate('/admin-login'); }}>Logout</Button>
+        </div>
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-4">

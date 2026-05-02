@@ -4,27 +4,43 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-
-// TEST ADMIN CREDENTIALS
-const ADMIN_EMAIL = "admin@agribank.com";
-const ADMIN_PASSWORD = "admin123";
 
 export default function AdminLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email.trim() || !password) { toast.error('Enter credentials'); return; }
     
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      localStorage.setItem('adminAuthenticated', 'true');
-      toast.success("Admin login successful");
+    setLoading(true);
+    try {
+      // Authenticate through the database API
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'adminLogin',
+          data: { email: email.trim().toLowerCase(), password }
+        }),
+      });
+      const json = await res.json();
+      
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Invalid admin credentials');
+      }
+      
+      sessionStorage.setItem('adminAuthenticated', 'true');
+      toast.success("Admin access granted");
       navigate('/dashboard/admin');
-    } else {
-      toast.error("Invalid admin credentials");
+    } catch (err: any) {
+      toast.error(err.message || "Access denied");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -36,7 +52,7 @@ export default function AdminLogin() {
             <ShieldAlert className="h-12 w-12 text-red-500" />
           </div>
           <CardTitle className="text-2xl">ADMIN LOGIN</CardTitle>
-          <CardDescription>Restricted admin area - Authorized personnel only</CardDescription>
+          <CardDescription>Restricted area — authorized personnel only</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleAdminLogin} className="space-y-4">
@@ -46,7 +62,8 @@ export default function AdminLogin() {
                 type="email" 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Enter admin email"
+                placeholder="admin@agribank.com"
+                autoComplete="email"
               />
             </div>
             <div className="space-y-2">
@@ -56,14 +73,12 @@ export default function AdminLogin() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter admin password"
+                autoComplete="current-password"
               />
             </div>
-            <Button type="submit" className="w-full bg-red-600 hover:bg-red-700">
-              Login as Administrator
+            <Button type="submit" className="w-full bg-red-600 hover:bg-red-700" disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Login as Administrator"}
             </Button>
-            <p className="text-xs text-center text-muted-foreground mt-4">
-              Test credentials: admin@agribank.com / admin123
-            </p>
           </form>
         </CardContent>
       </Card>

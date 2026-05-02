@@ -50,10 +50,7 @@ const Auth = () => {
     try {
       if (mode === 'signup') {
         await signUp(email, password, fullName);
-        toast.success("Account created! Welcome to AgriBank.", {
-          description: `Your password is: ${password}. Save it somewhere safe!`,
-          duration: 15000,
-        });
+        toast.success("Account created successfully. Welcome to AgriBank.");
       } else {
         await signIn(email, password);
         toast.success("Signed in successfully.");
@@ -168,21 +165,11 @@ const Auth = () => {
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "signup" ? "Create account" : "Continue"}
                 </Button>
                 {mode === 'signin' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!email.trim()) { toast.error('Enter your email first'); return; }
-                      try {
-                        const db = JSON.parse(localStorage.getItem('agribank_mock_db') || '{}');
-                        const found = (db.users || []).find((u: any) => u.email?.toLowerCase() === email.trim().toLowerCase());
-                        if (found) toast.success(`Your password is: ${found.password}`, { duration: 10000 });
-                        else toast.error('No account found with that email');
-                      } catch { toast.error('Could not retrieve password'); }
-                    }}
-                    className="block w-full text-center text-xs text-primary hover:underline mt-2"
-                  >
-                    Forgot password?
-                  </button>
+                  <p className="text-xs text-center text-muted-foreground mt-2">
+                    <button type="button" onClick={() => toast.info("Please contact support@agribank.com to reset your password.")} className="hover:underline">
+                      Forgot password?
+                    </button>
+                  </p>
                 )}
               </form>
             </>

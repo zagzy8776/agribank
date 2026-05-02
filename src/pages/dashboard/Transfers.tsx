@@ -217,7 +217,7 @@ const Transfers = () => {
     setShowConfirm(true);
   };
 
-  const handleReviewInternational = () => {
+const handleReviewInternational = () => {
     if (frozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
     if (!fromAccount) { toast.error("No account selected"); return; }
     if (!selectedCountry) { toast.error("Select a destination country"); return; }
@@ -233,11 +233,9 @@ const Transfers = () => {
     setShowConfirm(true);
   };
 
-import { useNavigate } from "react-router-dom";
+  const navigate = useNavigate();
 
-const navigate = useNavigate();
-
-const executeTransfer = async () => {
+  const executeTransfer = async () => {
   if (!user?.userId) return;
   setSubmitting(true);
   try {

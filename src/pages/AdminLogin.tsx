@@ -19,13 +19,12 @@ export default function AdminLogin() {
     
     setLoading(true);
     try {
-      // Authenticate through the database API
       const res = await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'adminLogin',
-          data: { email: email.trim().toLowerCase(), password }
+          data: { email: email.trim().toLowerCase(), password },
         }),
       });
       const json = await res.json();
@@ -34,9 +33,9 @@ export default function AdminLogin() {
         throw new Error(json.error || 'Invalid admin credentials');
       }
       
-      sessionStorage.setItem('adminAuthenticated', 'true');
+      localStorage.setItem('adminAuthenticated', 'true');
       toast.success("Admin access granted");
-      navigate('/dashboard/admin');
+      navigate('/dashboard/admin', { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Access denied");
     } finally {
@@ -58,23 +57,11 @@ export default function AdminLogin() {
           <form onSubmit={handleAdminLogin} className="space-y-4">
             <div className="space-y-2">
               <Label>Admin Email</Label>
-              <Input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@agribank.com"
-                autoComplete="email"
-              />
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@agribank.com" />
             </div>
             <div className="space-y-2">
               <Label>Admin Password</Label>
-              <Input 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter admin password"
-                autoComplete="current-password"
-              />
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter admin password" />
             </div>
             <Button type="submit" className="w-full bg-red-600 hover:bg-red-700" disabled={loading}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Login as Administrator"}

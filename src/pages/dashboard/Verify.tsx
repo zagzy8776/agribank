@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ShieldCheck, Camera, FileText, MapPin, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
-import { getAllKyc, submitKyc } from "@/lib/mockStore";
+import { getAllKyc, submitKyc } from "@/lib/db";
 
 const STEPS = [
   { id: 1, label: "ID document", icon: FileText },
@@ -50,12 +50,13 @@ const Verify = () => {
 
   useEffect(() => {
     if (!user) return;
-    const allKyc = getAllKyc();
-    const userKyc = allKyc.find(k => k.userId === user.id);
-    if (userKyc) setProfileStatus(userKyc.status);
+    getAllKyc().then(allKyc => {
+      const userKyc = allKyc.find(k => k.user_id === user.userId);
+      if (userKyc) setProfileStatus(userKyc.status);
+    });
   }, [user]);
 
-  const submit = () => {
+  const handleSubmit = () => {
     const parsed = schema.safeParse({
       document_type: docType, document_number: docNumber, document_country: docCountry,
       address_line: addressLine, city, postal_code: postal, country,
@@ -64,18 +65,20 @@ const Verify = () => {
     if (!selfieDone) { toast.error("Please complete the selfie step"); return; }
 
     setSubmitting(true);
-    setTimeout(() => {
-      submitKyc({
-        userId: user!.id,
-        documentType: parsed.data.document_type,
-        documentCountry: parsed.data.document_country,
-        city: parsed.data.city,
-        country: parsed.data.country,
-      });
+    submitKyc({
+      userId: user!.userId,
+      documentType: parsed.data.document_type,
+      documentCountry: parsed.data.document_country,
+      city: parsed.data.city,
+      country: parsed.data.country,
+    }).then(() => {
       setProfileStatus("pending");
-      setSubmitting(false);
       toast.success("Verification submitted. Awaiting admin review.");
-    }, 600);
+      setSubmitting(false);
+    }).catch(e => {
+      toast.error(e.message || "Submission failed");
+      setSubmitting(false);
+    });
   };
 
   if (profileStatus === "verified") {
@@ -128,93 +131,53 @@ const Verify = () => {
       </div>
 
       <Card className="mt-8 p-6 sm:p-8 border-border/70">
-        {step === 1 && (
-          <>
-            <h2 className="font-display text-2xl text-primary">ID document</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Choose a government-issued document.</p>
-            <div className="mt-6 space-y-4">
-              <div className="space-y-2"><Label>Document type</Label>
-                <Select value={docType} onValueChange={setDocType}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Passport">Passport</SelectItem>
-                    <SelectItem value="National ID">National ID card</SelectItem>
-                    <SelectItem value="Residence permit">Residence permit</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2"><Label>Document number</Label>
-                <Input value={docNumber} onChange={(e) => setDocNumber(e.target.value.toUpperCase())} placeholder="C01X00T47" />
-              </div>
-              <div className="space-y-2"><Label>Issuing country</Label>
-                <Select value={docCountry} onValueChange={setDocCountry}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{COUNTRIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
+        {step === 1 && (<>
+          <h2 className="font-display text-2xl text-primary">ID document</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Choose a government-issued document.</p>
+          <div className="mt-6 space-y-4">
+            <div className="space-y-2"><Label>Document type</Label>
+              <Select value={docType} onValueChange={setDocType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Passport">Passport</SelectItem><SelectItem value="National ID">National ID card</SelectItem><SelectItem value="Residence permit">Residence permit</SelectItem></SelectContent></Select>
             </div>
-          </>
-        )}
+            <div className="space-y-2"><Label>Document number</Label><Input value={docNumber} onChange={e => setDocNumber(e.target.value.toUpperCase())} placeholder="C01X00T47" /></div>
+            <div className="space-y-2"><Label>Issuing country</Label><Select value={docCountry} onValueChange={setDocCountry}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{COUNTRIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+        </>)}
 
-        {step === 2 && (
-          <>
-            <h2 className="font-display text-2xl text-primary">Selfie check</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Demo — click below to simulate.</p>
-            <div className="mt-6 grid place-items-center">
-              <button
-                type="button"
-                onClick={() => { setSelfieDone(true); toast.success("Selfie captured"); }}
-                className={`h-48 w-48 rounded-full border-2 border-dashed grid place-items-center transition-all ${selfieDone ? "border-moss bg-moss/10" : "border-border hover:border-primary"}`}
-              >
-                {selfieDone ? <CheckCircle2 className="h-12 w-12 text-moss" /> : <Camera className="h-12 w-12 text-muted-foreground" />}
-              </button>
-              <p className="mt-4 text-sm text-muted-foreground">{selfieDone ? "Looks good." : "Tap to capture selfie"}</p>
-            </div>
-          </>
-        )}
+        {step === 2 && (<>
+          <h2 className="font-display text-2xl text-primary">Selfie check</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Click below to simulate capture.</p>
+          <div className="mt-6 grid place-items-center">
+            <button type="button" onClick={() => { setSelfieDone(true); toast.success("Captured"); }} className={`h-48 w-48 rounded-full border-2 border-dashed grid place-items-center transition-all ${selfieDone ? "border-moss bg-moss/10" : "border-border hover:border-primary"}`}>
+              {selfieDone ? <CheckCircle2 className="h-12 w-12 text-moss" /> : <Camera className="h-12 w-12 text-muted-foreground" />}
+            </button>
+            <p className="mt-4 text-sm text-muted-foreground">{selfieDone ? "Looks good." : "Tap to capture"}</p>
+          </div>
+        </>)}
 
-        {step === 3 && (
-          <>
-            <h2 className="font-display text-2xl text-primary">Residential address</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Where you receive post.</p>
-            <div className="mt-6 space-y-4">
-              <div className="space-y-2"><Label>Street and number</Label><Input value={addressLine} onChange={(e) => setAddressLine(e.target.value)} placeholder="Brückenstraße 12" /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2"><Label>Postal code</Label><Input value={postal} onChange={(e) => setPostal(e.target.value)} placeholder="10179" /></div>
-                <div className="space-y-2"><Label>City</Label><Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Berlin" /></div>
-              </div>
-              <div className="space-y-2"><Label>Country</Label>
-                <Select value={country} onValueChange={setCountry}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{COUNTRIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-            </div>
-          </>
-        )}
+        {step === 3 && (<>
+          <h2 className="font-display text-2xl text-primary">Residential address</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Where you receive post.</p>
+          <div className="mt-6 space-y-4">
+            <div className="space-y-2"><Label>Street and number</Label><Input value={addressLine} onChange={e => setAddressLine(e.target.value)} placeholder="Brückenstraße 12" /></div>
+            <div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>Postal code</Label><Input value={postal} onChange={e => setPostal(e.target.value)} placeholder="10179" /></div><div className="space-y-2"><Label>City</Label><Input value={city} onChange={e => setCity(e.target.value)} placeholder="Berlin" /></div></div>
+            <div className="space-y-2"><Label>Country</Label><Select value={country} onValueChange={setCountry}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{COUNTRIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+        </>)}
 
-        {step === 4 && (
-          <>
-            <h2 className="font-display text-2xl text-primary">Review</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Check everything is correct, then submit.</p>
-            <dl className="mt-6 divide-y divide-border text-sm">
-              <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Document</dt><dd>{docType} · {docNumber}</dd></div>
-              <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Issued in</dt><dd>{docCountry}</dd></div>
-              <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Selfie</dt><dd>{selfieDone ? "✓ Captured" : "Missing"}</dd></div>
-              <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Address</dt><dd>{addressLine}, {postal} {city}, {country}</dd></div>
-            </dl>
-          </>
-        )}
+        {step === 4 && (<>
+          <h2 className="font-display text-2xl text-primary">Review</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Check everything is correct, then submit.</p>
+          <dl className="mt-6 divide-y divide-border text-sm">
+            <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Document</dt><dd>{docType} · {docNumber}</dd></div>
+            <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Issued in</dt><dd>{docCountry}</dd></div>
+            <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Selfie</dt><dd>{selfieDone ? "✓ Captured" : "Missing"}</dd></div>
+            <div className="grid grid-cols-2 py-3"><dt className="text-muted-foreground">Address</dt><dd>{addressLine}, {postal} {city}, {country}</dd></div>
+          </dl>
+        </>)}
 
         <div className="mt-8 flex justify-between gap-3">
-          <Button variant="ghost" onClick={() => setStep((s) => Math.max(1, s - 1))} disabled={step === 1}>Back</Button>
-          {step < 4 ? (
-            <Button variant="hero" onClick={() => setStep((s) => Math.min(4, s + 1))}>Continue</Button>
-          ) : (
-            <Button variant="hero" onClick={submit} disabled={submitting}>
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Submit verification"}
-            </Button>
-          )}
+          <Button variant="ghost" onClick={() => setStep(s => Math.max(1, s - 1))} disabled={step === 1}>Back</Button>
+          {step < 4 ? (<Button variant="hero" onClick={() => setStep(s => Math.min(4, s + 1))}>Continue</Button>) : (<Button variant="hero" onClick={handleSubmit} disabled={submitting}>{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Submit verification"}</Button>)}
         </div>
       </Card>
     </div>

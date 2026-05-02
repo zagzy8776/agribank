@@ -27,6 +27,7 @@ const Auth = () => {
   const [code, setCode] = useState("");
   const [generatedCode, setGeneratedCode] = useState("");
 
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -37,6 +38,10 @@ const Auth = () => {
 
   const handleCreds = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (mode === 'signup' && password !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
     const parsed = credSchema.safeParse({
       email,
       password,
@@ -159,7 +164,14 @@ const Auth = () => {
                 <div className="space-y-2">
                   <Label htmlFor="pwd">Password</Label>
                   <Input id="pwd" type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+                  {mode === 'signup' && <p className="text-xs text-muted-foreground">Must be at least 8 characters</p>}
                 </div>
+                {mode === 'signup' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="cpwd">Confirm password</Label>
+                    <Input id="cpwd" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="••••••••" />
+                  </div>
+                )}
 
                 <Button type="submit" variant="hero" size="lg" className="w-full" disabled={loading}>
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "signup" ? "Create account" : "Continue"}

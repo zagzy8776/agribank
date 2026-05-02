@@ -11,9 +11,10 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { ArrowDownRight, ArrowUpRight, Loader2, Bitcoin, AlertCircle } from "lucide-react";
 import { fmtMoney, fmtNumber, fmtCrypto } from "@/lib/format";
 import { toast } from "sonner";
-import { getUserAccounts, updateBalance, addTransaction, type Account } from "@/lib/db";
+import { getUserAccounts, updateBalance, addTransaction, type Account, createCryptoAccount, getUserCryptoAccounts, transferToCrypto, transferFromCrypto } from "@/lib/db";
 import { useCryptoPrices, type CryptoCoin } from "@/hooks/useCryptoPrices";
 import { useCryptoChart, type ChartDataPoint } from "@/hooks/useCryptoChart";
+import { useCryptoOrderBook, type OrderBook } from "@/hooks/useCryptoOrderBook";
 
 interface Holding { symbol: string; name: string; amount: number; avgBuyPriceEur: number; }
 
@@ -22,22 +23,34 @@ const Crypto = () => {
   const [selectedCoin, setSelectedCoin] = useState<CryptoCoin | null>(null);
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [eurAccount, setEurAccount] = useState<Account | null>(null);
+  const [cryptoAccounts, setCryptoAccounts] = useState<Account[]>([]);
   const [tradeOpen, setTradeOpen] = useState(false);
   const [tradeMode, setTradeMode] = useState<"buy" | "sell">("buy");
+  const [orderType, setOrderType] = useState<"market" | "limit">("market");
+  const [limitPrice, setLimitPrice] = useState("");
   const [tradeAmountEur, setTradeAmountEur] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [slippage, setSlippage] = useState(0.002); // 0.2% default
   const [fee, setFee] = useState(0.005); // 0.5% default fee
 
   const { coins, isLoading: pricesLoading, error: pricesError } = useCryptoPrices();
   const { chartData, isLoading: chartLoading, setDays } = useCryptoChart(selectedCoin?.id || '');
+  const { data: orderBook, isLoading: bookLoading } = useCryptoOrderBook(selectedCoin?.id || '');
 
   useEffect(() => {
     if (!user) return;
-    getUserAccounts(user.userId).then(accts => {
+    const loadData = async () => {
+      const accts = await getUserAccounts(user.userId);
       setEurAccount(accts.find(a => a.currency === "EUR" && a.is_primary) || accts[0] || null);
-    });
-    const raw = localStorage.getItem(`crypto_holdings_${user.userId}`);
-    setHoldings(raw ? JSON.parse(raw) : []);
+      const cryptoAccts = await getUserCryptoAccounts(user.userId);
+      setCryptoAccounts(cryptoAccts);
+      // Sync holdings with accounts
+      const raw = localStorage.getItem(`crypto_holdings_${user.userId}`);
+      const localHoldings = raw ? JSON.parse(raw) : [];
+      setHoldings(localHoldings);
+    };
+    loadData();
   }, [user]);
 
   const saveHoldings = (h: Holding[]) => { 
@@ -55,60 +68,94 @@ const Crypto = () => {
   const openTrade = (coin: CryptoCoin, mode: "buy" | "sell") => { 
     setSelectedCoin(coin); 
     setTradeMode(mode); 
+    setOrderType("market");
+    setLimitPrice("");
     setTradeAmountEur(""); 
     setTradeOpen(true); 
   };
 
-  const submitTrade = () => {
+  const getExecutedPrice = () => {
+    if (orderType === "limit") return parseFloat(limitPrice || selectedCoin?.price_eur.toString() || "0");
+    // Simulate slippage
+    const base = selectedCoin?.price_eur || 0;
+    const adjustment = tradeMode === "buy" ? 1 + slippage : 1 - slippage;
+    return base * adjustment;
+  };
+
+  const submitTrade = async () => {
     if (!selectedCoin || !user || !eurAccount) return;
     const amtEur = parseFloat(tradeAmountEur || "0");
     if (!amtEur || amtEur <= 0) { toast.error("Enter an amount"); return; }
-    const cents = Math.round(amtEur * 100);
-    const feeCents = Math.round(cents * fee);
-    const totalCents = cents + (tradeMode === "buy" ? feeCents : 0);
-    const cryptoQty = amtEur / selectedCoin.price_eur;
+    const executedPrice = getExecutedPrice();
+    const cryptoQty = amtEur / executedPrice;
     const existing = holdings.find(h => h.symbol === selectedCoin.symbol);
+    const cryptoAccount = cryptoAccounts.find(a => a.currency === selectedCoin.symbol);
 
-    if (tradeMode === "buy" && totalCents > eurAccount.balance_cents) { toast.error("Insufficient EUR balance (incl. fee)"); return; }
+    if (tradeMode === "buy" && !cryptoAccount) {
+      // Create crypto account if not exists
+      await createCryptoAccount(user.userId, selectedCoin.symbol);
+      // Reload accounts
+      const accts = await getUserCryptoAccounts(user.userId);
+      setCryptoAccounts(accts);
+    }
+
+    if (tradeMode === "buy" && amtEur > eurAccount.balance_cents / 100) { toast.error("Insufficient EUR balance"); return; }
     if (tradeMode === "sell" && (!existing || existing.amount < cryptoQty)) { toast.error(`Not enough ${selectedCoin.symbol}`); return; }
 
     setSubmitting(true);
-    const newBal = tradeMode === "buy" ? eurAccount.balance_cents - totalCents : eurAccount.balance_cents + cents - feeCents;
-    updateBalance(eurAccount.id, newBal).then(() => {
-      setEurAccount({ ...eurAccount, balance_cents: newBal });
-      let nh = [...holdings];
-      if (tradeMode === "buy") {
-        if (existing) { 
-          const na = existing.amount + cryptoQty; 
-          const navg = ((existing.amount * existing.avgBuyPriceEur) + amtEur) / na; 
-          nh = nh.map(h => h.symbol === selectedCoin.symbol ? { ...h, amount: na, avgBuyPriceEur: navg } : h); 
-        } else { 
-          nh.push({ symbol: selectedCoin.symbol, name: selectedCoin.name, amount: cryptoQty, avgBuyPriceEur: selectedCoin.price_eur }); 
+    setProcessing(true);
+
+    // Simulate execution delay
+    setTimeout(async () => {
+      try {
+        const cents = Math.round(amtEur * 100);
+        const feeCents = Math.round(cents * fee);
+        const totalCents = cents + (tradeMode === "buy" ? feeCents : 0);
+        const newBal = tradeMode === "buy" ? eurAccount.balance_cents - totalCents : eurAccount.balance_cents + cents - feeCents;
+        await updateBalance(eurAccount.id, newBal);
+        setEurAccount({ ...eurAccount, balance_cents: newBal });
+
+        let nh = [...holdings];
+        if (tradeMode === "buy") {
+          if (existing) { 
+            const na = existing.amount + cryptoQty; 
+            const navg = ((existing.amount * existing.avgBuyPriceEur) + amtEur) / na; 
+            nh = nh.map(h => h.symbol === selectedCoin.symbol ? { ...h, amount: na, avgBuyPriceEur: navg } : h); 
+          } else { 
+            nh.push({ symbol: selectedCoin.symbol, name: selectedCoin.name, amount: cryptoQty, avgBuyPriceEur: executedPrice }); 
+          }
+          // Transfer to crypto account
+          const cryptoAcc = cryptoAccounts.find(a => a.currency === selectedCoin.symbol) || { id: 'temp' };
+          await transferToCrypto(eurAccount.id, cryptoAcc.id, totalCents, selectedCoin.symbol, executedPrice, `Buy ${cryptoQty} ${selectedCoin.symbol}`);
+        } else {
+          const na = existing!.amount - cryptoQty;
+          if (na <= 0.0000001) nh = nh.filter(h => h.symbol !== selectedCoin.symbol);
+          else nh = nh.map(h => h.symbol === selectedCoin.symbol ? { ...h, amount: na } : h);
+          // Transfer from crypto account
+          const cryptoAcc = cryptoAccounts.find(a => a.currency === selectedCoin.symbol) || { id: 'temp' };
+          await transferFromCrypto(cryptoAcc.id, eurAccount.id, cryptoQty, selectedCoin.symbol, executedPrice, `Sell ${cryptoQty} ${selectedCoin.symbol}`);
         }
-      } else {
-        const na = existing!.amount - cryptoQty;
-        if (na <= 0.0000001) nh = nh.filter(h => h.symbol !== selectedCoin.symbol);
-        else nh = nh.map(h => h.symbol === selectedCoin.symbol ? { ...h, amount: na } : h);
+        saveHoldings(nh);
+        const desc = `${tradeMode === "buy" ? "Buy" : "Sell"} ${fmtCrypto(cryptoQty)} ${selectedCoin.symbol} at ${fmtMoney(Math.round(executedPrice * 100), 'EUR')} (fee: ${fmtMoney(Math.round(cents * fee * 100), 'EUR')})`;
+        await addTransaction({ 
+          user_id: user.userId, 
+          account_id: eurAccount.id, 
+          direction: tradeMode === "buy" ? "debit" : "credit", 
+          amount_cents: totalCents, 
+          currency: "EUR", 
+          description: desc, 
+          category: "Crypto", 
+          status: "completed" 
+        });
+        toast.success(`Trade executed! ${tradeMode === "buy" ? "Bought" : "Sold"} ${fmtCrypto(cryptoQty)} ${selectedCoin.symbol} at ${fmtMoney(Math.round(executedPrice * 100), 'EUR')} (incl. fee)`);
+        setTradeOpen(false); 
+      } catch (e) {
+        toast.error(e.message || "Trade failed");
+      } finally {
+        setSubmitting(false);
+        setProcessing(false);
       }
-      saveHoldings(nh);
-      const desc = `${tradeMode === "buy" ? "Buy" : "Sell"} ${fmtCrypto(cryptoQty)} ${selectedCoin.symbol} (fee: ${fmtMoney(feeCents, 'EUR')})`;
-      addTransaction({ 
-        user_id: user.userId, 
-        account_id: eurAccount.id, 
-        direction: tradeMode === "buy" ? "debit" : "credit", 
-        amount_cents: totalCents, 
-        currency: "EUR", 
-        description: desc, 
-        category: "Crypto", 
-        status: "completed" 
-      });
-      toast.success(`${tradeMode === "buy" ? "Bought" : "Sold"} ${fmtCrypto(cryptoQty)} ${selectedCoin.symbol} (incl. ${fee * 100}% fee)`);
-      setTradeOpen(false); 
-      setSubmitting(false);
-    }).catch(e => { 
-      toast.error(e.message || "Trade failed"); 
-      setSubmitting(false); 
-    });
+    }, Math.random() * 3000 + 2000); // 2-5s delay
   };
 
   const handleCoinClick = (coin: CryptoCoin) => {
@@ -126,7 +173,7 @@ const Crypto = () => {
         <div>
           <p className="text-xs uppercase tracking-[0.22em] text-moss font-medium">Digital assets</p>
           <h1 className="mt-2 font-display text-3xl md:text-4xl text-primary">Crypto</h1>
-          <p className="mt-2 text-muted-foreground">Live prices from CoinGecko. Trade instantly from your EUR account.</p>
+          <p className="mt-2 text-muted-foreground">Live prices from CoinGecko. Trade instantly from your EUR account with realistic execution.</p>
         </div>
       </div>
 
@@ -211,6 +258,74 @@ const Crypto = () => {
         </div>
       )}
 
+      {/* Order Book for Selected Coin */}
+      {selectedCoin && orderBook && (
+        <div className="mt-8 grid lg:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Order Book - {selectedCoin.symbol}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="text-center text-sm text-muted-foreground">
+                Spread: {fmtNumber(orderBook.spread, 2)}% | Best Bid: {fmtMoney(Math.round(orderBook.bestBid * 100), 'EUR')} | Best Ask: {fmtMoney(Math.round(orderBook.bestAsk * 100), 'EUR')}
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-medium text-destructive">Asks (Sell)</h4>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Price (EUR)</TableHead>
+                      <TableHead>Size ({selectedCoin.symbol})</TableHead>
+                      <TableHead>Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orderBook.asks.slice(0, 5).map((entry, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-destructive">{fmtMoney(Math.round(entry.price * 100), 'EUR')}</TableCell>
+                        <TableCell>{fmtNumber(entry.size, 4)}</TableCell>
+                        <TableCell>{fmtNumber(entry.total, 4)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-medium text-green-600">Bids (Buy)</h4>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Price (EUR)</TableHead>
+                      <TableHead>Size ({selectedCoin.symbol})</TableHead>
+                      <TableHead>Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orderBook.bids.slice(0, 5).map((entry, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-green-600">{fmtMoney(Math.round(entry.price * 100), 'EUR')}</TableCell>
+                        <TableCell>{fmtNumber(entry.size, 4)}</TableCell>
+                        <TableCell>{fmtNumber(entry.total, 4)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Trade {selectedCoin.symbol}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">Simulated execution with slippage and fees.</p>
+              <Button onClick={() => openTrade(selectedCoin, "buy")} className="w-full">Buy {selectedCoin.symbol}</Button>
+              <Button onClick={() => openTrade(selectedCoin, "sell")} variant="outline" className="w-full">Sell {selectedCoin.symbol}</Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Market Table */}
       <h2 className="mt-12 font-display text-2xl text-primary">Market</h2>
       <Card className="mt-4 border-border/70 overflow-hidden">
@@ -250,9 +365,9 @@ const Crypto = () => {
         )}
       </Card>
 
-      {/* Trade Dialog with Fee */}
+      {/* Trade Dialog with Order Types, Slippage, Limit */}
       <Dialog open={tradeOpen} onOpenChange={setTradeOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl">
               {tradeMode === "buy" ? "Buy" : "Sell"} {selectedCoin?.name}
@@ -270,6 +385,29 @@ const Crypto = () => {
                 Current price: <span className="text-foreground font-medium">{fmtMoney(Math.round(selectedCoin.price_eur * 100), "EUR")}</span>
               </p>
               <div className="space-y-2">
+                <Label>Order Type</Label>
+                <Select value={orderType} onValueChange={(v) => setOrderType(v as "market" | "limit")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="market">Market (instant)</SelectItem>
+                    <SelectItem value="limit">Limit (set price)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {orderType === "limit" && (
+                <div className="space-y-2">
+                  <Label>Limit Price (EUR)</Label>
+                  <Input 
+                    type="number" 
+                    value={limitPrice} 
+                    onChange={e => setLimitPrice(e.target.value)} 
+                    placeholder={selectedCoin.price_eur.toString()}
+                  />
+                </div>
+              )}
+              <div className="space-y-2">
                 <Label>Amount in EUR</Label>
                 <Input 
                   inputMode="decimal" 
@@ -281,11 +419,14 @@ const Crypto = () => {
               {tradeAmountEur && (
                 <div className="space-y-1 text-sm">
                   <p className="text-muted-foreground">
-                    ≈ {fmtCrypto(parseFloat(tradeAmountEur || "0") / selectedCoin.price_eur)} {selectedCoin.symbol}
+                    Qty: {fmtCrypto(parseFloat(tradeAmountEur || "0") / getExecutedPrice())} {selectedCoin.symbol}
+                  </p>
+                  <p className="text-xs text-destructive">
+                    Est. Slippage: {slippage * 100}% | Fee: {fee * 100}%
                   </p>
                   {tradeMode === "buy" && (
                     <p className="text-xs text-destructive">
-                      Fee: {fee * 100}% ({fmtMoney(Math.round(parseFloat(tradeAmountEur) * fee * 100), 'EUR')})
+                      Total (incl. fee): {fmtMoney(Math.round(parseFloat(tradeAmountEur) * (1 + fee) * 100), 'EUR')}
                     </p>
                   )}
                 </div>
@@ -294,9 +435,16 @@ const Crypto = () => {
                 <Button 
                   variant="hero" 
                   onClick={submitTrade} 
-                  disabled={submitting || !tradeAmountEur}
+                  disabled={submitting || !tradeAmountEur || processing}
                 >
-                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  {processing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Executing Trade...
+                    </>
+                  ) : submitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : null}
                   {tradeMode === "buy" ? "Buy" : "Sell"} {selectedCoin.symbol}
                 </Button>
               </DialogFooter>
@@ -309,4 +457,5 @@ const Crypto = () => {
 };
 
 export default Crypto;
+
 

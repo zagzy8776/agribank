@@ -180,74 +180,118 @@ const Transfers = () => {
     if (cents > accounting.balance_cents) { toast.error("Insufficient balance"); return; }
     if (!recipientExists) { toast.error("No AgriBank user found with that email"); return; }
 
+    // Clear form immediately
+    const tempEmail = internalEmail;
+    const tempName = recipientName;
+    setInternalEmail(""); 
+    setInternalAmount(""); 
+    setInternalDesc("");
     setSubmitting(true);
+
     setTimeout(() => {
-      updateBalance(accounting.id, accounting.balance_cents - cents);
-      addTransaction({
-        userId: user!.id, accountId: accounting.id, direction: 'debit',
-        amount_cents: cents, currency: 'EUR',
-        description: internalDesc || `Internal transfer to ${internalEmail}`,
-        category: 'Transfer', counterpartyName: recipientName || internalEmail, network: 'internal', status: 'completed',
-      });
-      // Credit recipient (simplified — finds their primary account)
-      const allUsers = getAllUsers();
-      const target = allUsers.find(u => u.email.toLowerCase() === internalEmail.toLowerCase());
-      if (target) {
-        const targetAccounts = getUserAccounts(target.id);
-        const targetPrimary = targetAccounts.find(a => a.is_primary);
-        if (targetPrimary) {
-          updateBalance(targetPrimary.id, targetPrimary.balance_cents + cents);
-          addTransaction({
-            userId: target.id, accountId: targetPrimary.id, direction: 'credit',
-            amount_cents: cents, currency: 'EUR',
-            description: `Received from ${user?.email}`, category: 'Transfer', network: 'internal', status: 'completed',
-          });
+      try {
+        updateBalance(accounting.id, accounting.balance_cents - cents);
+        addTransaction({
+          userId: user!.id, accountId: accounting.id, direction: 'debit',
+          amount_cents: cents, currency: 'EUR',
+          description: internalDesc || `Internal transfer to ${tempEmail}`,
+          category: 'Transfer', counterpartyName: tempName || tempEmail, network: 'internal', status: 'completed',
+        });
+        // Credit recipient
+        const allUsers = getAllUsers();
+        const target = allUsers.find(u => u.email.toLowerCase() === tempEmail.toLowerCase());
+        if (target) {
+          const targetAccounts = getUserAccounts(target.id);
+          const targetPrimary = targetAccounts.find(a => a.is_primary);
+          if (targetPrimary) {
+            updateBalance(targetPrimary.id, targetPrimary.balance_cents + cents);
+            addTransaction({
+              userId: target.id, accountId: targetPrimary.id, direction: 'credit',
+              amount_cents: cents, currency: 'EUR',
+              description: `Received from ${user?.email}`, category: 'Transfer', network: 'internal', status: 'completed',
+            });
+          }
         }
+        toast.success(`✅ Sent €${amt.toFixed(2)} to ${tempName || tempEmail}`);
+        setAccounts(getUserAccounts(user!.id)); // Refresh
+      } catch (error) {
+        toast.error("Transfer failed. Please try again.");
+        console.error("Transfer error:", error);
+      } finally {
+        setSubmitting(false);
       }
-      toast.success(`Sent €${amt.toFixed(2)} to ${recipientName || internalEmail}`);
-      setInternalEmail(""); setInternalAmount(""); setInternalDesc("");
-      setSubmitting(false);
-    }, 400);
+    }, 800);
   };
 
   // International send
   const handleInternationalSend = () => {
-    if (isFrozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
-    if (!fromAccount) return;
-    if (!selectedCountry) { toast.error("Select a destination country"); return; }
-    if (!recipientName) { toast.error("Enter recipient name"); return; }
-    if (selectedCountry.iban && !recipientIban) { toast.error("Enter IBAN"); return; }
-    if (selectedCountry.swift && !recipientSwift) { toast.error("Enter SWIFT/BIC"); return; }
+    // Close dialog first to prevent state conflict
+    setShowConfirm(false);
+    
+    if (isFrozen) { 
+      toast.error('Account is frozen. Contact support@agribank.com'); 
+      setSubmitting(false);
+      return; 
+    }
+    if (!fromAccount) { 
+      toast.error("No account selected"); 
+      setSubmitting(false);
+      return; 
+    }
+    if (!selectedCountry) { toast.error("Select a destination country"); setSubmitting(false); return; }
+    if (!recipientName) { toast.error("Enter recipient name"); setSubmitting(false); return; }
+    if (selectedCountry.iban && !recipientIban) { toast.error("Enter IBAN"); setSubmitting(false); return; }
+    if (selectedCountry.swift && !recipientSwift) { toast.error("Enter SWIFT/BIC"); setSubmitting(false); return; }
     const amt = parseFloat(intlAmount || "0");
-    if (!amt || amt <= 0) { toast.error("Enter an amount"); return; }
+    if (!amt || amt <= 0) { toast.error("Enter an amount"); setSubmitting(false); return; }
     const totalCents = Math.round(conversion.total * 100);
-    if (totalCents > fromAccount.balance_cents) { toast.error("Insufficient balance"); return; }
+    if (totalCents > fromAccount.balance_cents) { toast.error("Insufficient balance"); setSubmitting(false); return; }
 
+    // Capture state before reset
+    const tempAmount = intlAmount;
+    const tempName = recipientName;
+    const tempCountry = selectedCountry;
+    const tempIban = recipientIban;
+    const tempSwift = recipientSwift;
+    
+    // Reset form immediately
+    setIntlAmount(""); 
+    setIntlDesc(""); 
+    setRecipientName(""); 
+    setRecipientIban(""); 
+    setRecipientSwift(""); 
+    setRecipientBankName("");
     setSubmitting(true);
+
     setTimeout(() => {
-      const newBal = fromAccount.balance_cents - totalCents;
-      updateBalance(fromAccount.id, newBal);
-      addTransaction({
-        userId: user!.id, accountId: fromAccount.id, direction: 'debit',
-        amount_cents: Math.round(amt * 100), currency: fromAccount.currency,
-        description: intlDesc || `Transfer to ${recipientName} (${selectedCountry.name})`,
-        category: 'Transfer', counterpartyName: recipientName,
-        counterpartyIban: recipientIban || undefined, network, status: 'completed',
-      });
-      if (saveRecipient) {
-        addRecipient({
-          userId: user!.id, name: recipientName,
-          iban: recipientIban || undefined, swiftBic: recipientSwift || undefined,
-          bankName: recipientBankName || undefined, country: selectedCountry.name,
-          currency: selectedCountry.currency, isFavorite: false,
+      try {
+        const newBal = fromAccount.balance_cents - totalCents;
+        updateBalance(fromAccount.id, newBal);
+        addTransaction({
+          userId: user!.id, accountId: fromAccount.id, direction: 'debit',
+          amount_cents: Math.round(parseFloat(tempAmount) * 100), currency: fromAccount.currency,
+          description: intlDesc || `Transfer to ${tempName} (${tempCountry.name})`,
+          category: 'Transfer', counterpartyName: tempName,
+          counterpartyIban: tempIban || undefined, network: tempCountry.network, status: 'completed',
         });
+        if (saveRecipient) {
+          addRecipient({
+            userId: user!.id, name: tempName,
+            iban: tempIban || undefined, swift_bic: tempSwift || undefined,
+            bank_name: recipientBankName || undefined, country: tempCountry.name,
+            currency: tempCountry.currency, isFavorite: false,
+          });
+        }
+        toast.success(`✅ Sent ${fmtMoney(Math.round(parseFloat(tempAmount) * 100), fromAccount.currency)} to ${tempName}`);
+        setAccounts(getUserAccounts(user!.id));
+        setRecipients(getUserRecipients(user!.id));
+      } catch (error) {
+        toast.error("Transfer failed. Please try again.");
+        console.error("International transfer error:", error);
+      } finally {
+        setSubmitting(false);
       }
-      toast.success(`Sent ${fmtMoney(Math.round(amt * 100), fromAccount.currency)} to ${recipientName}`);
-      setAccounts(getUserAccounts(user!.id));
-      setRecipients(getUserRecipients(user!.id));
-      setIntlAmount(""); setIntlDesc(""); setRecipientName(""); setRecipientIban(""); setRecipientSwift(""); setRecipientBankName("");
-      setShowConfirm(false); setSubmitting(false);
-    }, 400);
+    }, 1200);
   };
 
   const selectRecipient = (r: Recipient) => {

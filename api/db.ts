@@ -133,6 +133,14 @@ export default async function handler(req: any, res: any) {
         return res.json({ success: true });
       }
 
+      // ---- ADMIN LOGIN ----
+      case 'adminLogin': {
+        const { email, password } = data;
+        const rows = await query(`SELECT * FROM users WHERE email = $1 AND password = $2`, [email, password]);
+        if (rows.length === 0) return res.status(401).json({ error: 'Invalid admin credentials' });
+        return res.json({ success: true, user: rows[0] });
+      }
+
       // ---- SIGN IN ----
       case 'signin': {
         const { email, password } = data;

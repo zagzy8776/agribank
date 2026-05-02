@@ -11,7 +11,7 @@ function gid(): string {
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function call(action: string, data?: Record<string, unknown>): Promise<any> {
   let res: Response;
   try {
@@ -58,33 +58,63 @@ export async function signInUser(email: string, password: string): Promise<User>
 
 // ---- Queries ----
 export async function getAllUsers(): Promise<User[]> {
-  const res = await call('getAllUsers');
-  return res.users || [];
+  try {
+    const res = await call('getAllUsers');
+    return Array.isArray(res.users) ? res.users : [];
+  } catch (err) {
+    console.error("getAllUsers failed:", err);
+    return [];
+  }
 }
 
 export async function getUserById(userId: string): Promise<User | undefined> {
-  const users = await getAllUsers();
-  return users.find(u => u.id === userId);
+  try {
+    const users = await getAllUsers();
+    return users.find(u => u.id === userId);
+  } catch (err) {
+    console.error("getUserById failed:", err);
+    return undefined;
+  }
 }
 
 export async function getUserAccounts(userId: string): Promise<Account[]> {
-  const res = await call('getUserAccounts', { userId });
-  return res.accounts || [];
+  try {
+    const res = await call('getUserAccounts', { userId });
+    return Array.isArray(res.accounts) ? res.accounts : [];
+  } catch (err) {
+    console.error("getUserAccounts failed:", err);
+    return [];
+  }
 }
 
 export async function getAllAccounts(): Promise<Account[]> {
-  const res = await call('getAllAccounts');
-  return res.accounts || [];
+  try {
+    const res = await call('getAllAccounts');
+    return Array.isArray(res.accounts) ? res.accounts : [];
+  } catch (err) {
+    console.error("getAllAccounts failed:", err);
+    return [];
+  }
 }
 
 export async function getAllTransactions(): Promise<Transaction[]> {
-  const res = await call('getAllTransactions');
-  return res.transactions || [];
+  try {
+    const res = await call('getAllTransactions');
+    return Array.isArray(res.transactions) ? res.transactions : [];
+  } catch (err) {
+    console.error("getAllTransactions failed:", err);
+    return [];
+  }
 }
 
 export async function getUserTransactions(userId: string): Promise<Transaction[]> {
-  const all = await getAllTransactions();
-  return all.filter(t => t.user_id === userId).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  try {
+    const res = await call('getUserTransactions', { userId });
+    return res.transactions || [];
+  } catch (err) {
+    console.error("getUserTransactions failed:", err);
+    return [];
+  }
 }
 
 export async function getAllKyc(): Promise<Kyc[]> {
@@ -98,8 +128,34 @@ export async function getAllAuditLogs(): Promise<AuditLog[]> {
 }
 
 export async function getUserRecipients(userId: string): Promise<Recipient[]> {
-  const res = await call('getRecipients', { userId });
-  return (res.recipients || []).sort((a: Recipient, b: Recipient) => b.created_at.localeCompare(a.created_at));
+  try {
+    const res = await call('getRecipients', { userId });
+    const list = Array.isArray(res.recipients) ? res.recipients : [];
+    return list.sort((a: Recipient, b: Recipient) => (b.created_at || '').localeCompare(a.created_at || ''));
+  } catch (err) {
+    console.error("getUserRecipients failed:", err);
+    return [];
+  }
+}
+
+export async function getUserByEmail(email: string): Promise<User | null> {
+  try {
+    const res = await call('getUserByEmail', { email });
+    return res.user || null;
+  } catch (err) {
+    console.error("getUserByEmail failed:", err);
+    return null;
+  }
+}
+
+export async function getFxRates(): Promise<Record<string, number> | null> {
+  try {
+    const res = await call('getFxRates');
+    return res.rates;
+  } catch (err) {
+    console.error("getFxRates failed:", err);
+    return null;
+  }
 }
 
 // ---- Mutations ----
@@ -141,6 +197,24 @@ export async function submitKyc(kyc: { userId: string; documentType: string; doc
 
 export async function addRecipient(r: { userId: string; name: string; iban: string; swiftBic?: string; bankName?: string; country?: string; currency: string }): Promise<void> {
   await call('addRecipient', { id: gid(), ...r });
+}
+
+export async function internalTransfer(data: { fromAccountId: string; toEmail: string; amountCents: number; description?: string; userId: string }): Promise<void> {
+  await call('internalTransfer', data);
+}
+
+export async function internationalTransfer(data: {
+  fromAccountId: string;
+  amountCents: number;
+  totalCents: number;
+  currency: string;
+  description: string;
+  recipientName: string;
+  recipientIban: string;
+  network: string;
+  userId: string;
+}): Promise<void> {
+  await call('internationalTransfer', data);
 }
 
 export async function isUserFrozen(userId: string): Promise<boolean> {

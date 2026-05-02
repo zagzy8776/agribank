@@ -12,7 +12,7 @@ import { Copy, Loader2, Send, Globe2, Banknote, ArrowRight, Users, Search, Check
 import { fmtMoney, fmtIban, fmtNumber } from "@/lib/format";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
-import { getUserAccounts, getUserRecipients, addRecipient, addTransaction, updateBalance, getAllUsers, isUserFrozen, type Account, type Recipient } from "@/lib/db";
+import { getUserAccounts, getUserRecipients, addRecipient, internalTransfer, internationalTransfer, getUserByEmail, isUserFrozen, getFxRates, type Account, type Recipient } from "@/lib/db";
 
 // ---------- countries with flags & network ----------
 type Country = {
@@ -111,6 +111,8 @@ const Transfers = () => {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [transferType, setTransferType] = useState<'internal' | 'international'>('international');
+  const [rates, setRates] = useState<Record<string, number>>(MOCK_RATES);
 
   // Internal transfer
   const [internalEmail, setInternalEmail] = useState("");
@@ -131,25 +133,42 @@ const Transfers = () => {
   const [saveRecipient, setSaveRecipient] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
-    const userAccounts = getUserAccounts(user.id);
-    setAccounts(userAccounts);
-    if (userAccounts.length > 0) setFromAccountId(userAccounts[0].id);
-    setRecipients(getUserRecipients(user.id));
+    if (!user?.userId) return;
+    const loadData = async () => {
+      try {
+        const accts = await getUserAccounts(user.userId);
+        if (Array.isArray(accts)) {
+          setAccounts(accts);
+          if (accts.length > 0) setFromAccountId(accts[0].id);
+        }
+        const recips = await getUserRecipients(user.userId);
+        if (Array.isArray(recips)) {
+          setRecipients(recips);
+        }
+      } catch (err) {
+        console.error("Failed to load dashboard data:", err);
+      }
+    };
+    loadData();
+
+    // Fetch live rates
+    getFxRates().then(newRates => {
+      if (newRates) setRates(newRates);
+    });
   }, [user]);
 
-  const fromAccount = accounts.find(a => a.id === fromAccountId);
+  const fromAccount = Array.isArray(accounts) ? accounts.find(a => a.id === fromAccountId) : null;
   const toCurrency = selectedCountry?.currency || 'EUR';
   const network = selectedCountry?.network || 'sepa_instant';
 
   const conversion = useMemo(() => {
     const amt = parseFloat(intlAmount || "0");
-    if (!fromAccount || !amt || !MOCK_RATES[fromAccount.currency] || !MOCK_RATES[toCurrency]) {
+    if (!fromAccount || !amt || !rates[fromAccount.currency] || !rates[toCurrency]) {
       return { rate: 1, converted: amt, fee: 0, total: amt };
     }
-    const eurAmount = amt / MOCK_RATES[fromAccount.currency];
-    const converted = eurAmount * MOCK_RATES[toCurrency];
-    const rate = MOCK_RATES[toCurrency] / MOCK_RATES[fromAccount.currency];
+    const eurAmount = amt / rates[fromAccount.currency];
+    const converted = eurAmount * rates[toCurrency];
+    const rate = rates[toCurrency] / rates[fromAccount.currency];
     let feePct = 0;
     if (network === 'sepa') feePct = 0.001;
     if (network === 'sepa_instant') feePct = 0.001;
@@ -161,137 +180,114 @@ const Transfers = () => {
   // Check internal recipient email
   useEffect(() => {
     if (!internalEmail.trim()) { setRecipientExists(false); setRecipientName(""); return; }
-    const allUsers = getAllUsers();
-    const found = allUsers.find(u => u.email.toLowerCase() === internalEmail.trim().toLowerCase() && u.id !== user?.id);
-    setRecipientExists(!!found);
-    setRecipientName(found?.fullName || "");
+    const lookup = async () => {
+      const found = await getUserByEmail(internalEmail.trim());
+      if (found && found.id !== user?.userId) {
+        setRecipientExists(true);
+        setRecipientName(found.full_name);
+      } else {
+        setRecipientExists(false);
+        setRecipientName("");
+      }
+    };
+    lookup();
   }, [internalEmail, user]);
 
-  const isFrozen = user ? isUserFrozen(user.id) : false;
+  const [frozen, setFrozen] = useState(false);
+  useEffect(() => {
+    if (user) isUserFrozen(user.userId).then(setFrozen);
+  }, [user]);
 
-  // Internal send
-  const handleInternalSend = () => {
-    if (isFrozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
-    const accounting = accounts.find(a => a.currency === 'EUR' && a.is_primary);
-    if (!accounting) { toast.error("No EUR account found"); return; }
+  const handleReviewInternal = () => {
+    if (frozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
     const amt = parseFloat(internalAmount || "0");
     if (!amt || amt <= 0) { toast.error("Enter an amount"); return; }
-    const cents = Math.round(amt * 100);
-    if (cents > accounting.balance_cents) { toast.error("Insufficient balance"); return; }
     if (!recipientExists) { toast.error("No AgriBank user found with that email"); return; }
+    
+    const cents = Math.round(amt * 100);
+    const accounting = Array.isArray(accounts) ? accounts.find(a => a.currency === 'EUR' && a.is_primary) : null;
+    if (!accounting || cents > accounting.balance_cents) {
+      toast.error("Insufficient balance in EUR account");
+      return;
+    }
 
-    // Clear form immediately
-    const tempEmail = internalEmail;
-    const tempName = recipientName;
-    setInternalEmail(""); 
-    setInternalAmount(""); 
-    setInternalDesc("");
-    setSubmitting(true);
-
-    setTimeout(() => {
-      try {
-        updateBalance(accounting.id, accounting.balance_cents - cents);
-        addTransaction({
-          userId: user!.id, accountId: accounting.id, direction: 'debit',
-          amount_cents: cents, currency: 'EUR',
-          description: internalDesc || `Internal transfer to ${tempEmail}`,
-          category: 'Transfer', counterpartyName: tempName || tempEmail, network: 'internal', status: 'completed',
-        });
-        // Credit recipient
-        const allUsers = getAllUsers();
-        const target = allUsers.find(u => u.email.toLowerCase() === tempEmail.toLowerCase());
-        if (target) {
-          const targetAccounts = getUserAccounts(target.id);
-          const targetPrimary = targetAccounts.find(a => a.is_primary);
-          if (targetPrimary) {
-            updateBalance(targetPrimary.id, targetPrimary.balance_cents + cents);
-            addTransaction({
-              userId: target.id, accountId: targetPrimary.id, direction: 'credit',
-              amount_cents: cents, currency: 'EUR',
-              description: `Received from ${user?.email}`, category: 'Transfer', network: 'internal', status: 'completed',
-            });
-          }
-        }
-        toast.success(`✅ Sent €${amt.toFixed(2)} to ${tempName || tempEmail}`);
-        setAccounts(getUserAccounts(user!.id)); // Refresh
-      } catch (error) {
-        toast.error("Transfer failed. Please try again.");
-        console.error("Transfer error:", error);
-      } finally {
-        setSubmitting(false);
-      }
-    }, 800);
+    setTransferType('internal');
+    setShowConfirm(true);
   };
 
-  // International send
-  const handleInternationalSend = () => {
-    // Close dialog first to prevent state conflict
-    setShowConfirm(false);
+  const handleReviewInternational = () => {
+    if (frozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
+    if (!fromAccount) { toast.error("No account selected"); return; }
+    if (!selectedCountry) { toast.error("Select a destination country"); return; }
+    if (!recipientName) { toast.error("Enter recipient name"); return; }
+    if (selectedCountry.iban && !recipientIban) { toast.error("Enter IBAN"); return; }
     
-    if (isFrozen) { 
-      toast.error('Account is frozen. Contact support@agribank.com'); 
-      setSubmitting(false);
-      return; 
-    }
-    if (!fromAccount) { 
-      toast.error("No account selected"); 
-      setSubmitting(false);
-      return; 
-    }
-    if (!selectedCountry) { toast.error("Select a destination country"); setSubmitting(false); return; }
-    if (!recipientName) { toast.error("Enter recipient name"); setSubmitting(false); return; }
-    if (selectedCountry.iban && !recipientIban) { toast.error("Enter IBAN"); setSubmitting(false); return; }
-    if (selectedCountry.swift && !recipientSwift) { toast.error("Enter SWIFT/BIC"); setSubmitting(false); return; }
     const amt = parseFloat(intlAmount || "0");
-    if (!amt || amt <= 0) { toast.error("Enter an amount"); setSubmitting(false); return; }
+    if (!amt || amt <= 0) { toast.error("Enter an amount"); return; }
     const totalCents = Math.round(conversion.total * 100);
-    if (totalCents > fromAccount.balance_cents) { toast.error("Insufficient balance"); setSubmitting(false); return; }
+    if (totalCents > fromAccount.balance_cents) { toast.error("Insufficient balance"); return; }
 
-    // Capture state before reset
-    const tempAmount = intlAmount;
-    const tempName = recipientName;
-    const tempCountry = selectedCountry;
-    const tempIban = recipientIban;
-    const tempSwift = recipientSwift;
-    
-    // Reset form immediately
-    setIntlAmount(""); 
-    setIntlDesc(""); 
-    setRecipientName(""); 
-    setRecipientIban(""); 
-    setRecipientSwift(""); 
-    setRecipientBankName("");
+    setTransferType('international');
+    setShowConfirm(true);
+  };
+
+  const executeTransfer = async () => {
+    if (!user?.userId) return;
     setSubmitting(true);
-
-    setTimeout(() => {
-      try {
-        const newBal = fromAccount.balance_cents - totalCents;
-        updateBalance(fromAccount.id, newBal);
-        addTransaction({
-          userId: user!.id, accountId: fromAccount.id, direction: 'debit',
-          amount_cents: Math.round(parseFloat(tempAmount) * 100), currency: fromAccount.currency,
-          description: intlDesc || `Transfer to ${tempName} (${tempCountry.name})`,
-          category: 'Transfer', counterpartyName: tempName,
-          counterpartyIban: tempIban || undefined, network: tempCountry.network, status: 'completed',
+    try {
+      if (transferType === 'internal') {
+        const accounting = Array.isArray(accounts) ? accounts.find(a => a.currency === 'EUR' && a.is_primary) : null;
+        if (!accounting) throw new Error("Primary EUR account not found");
+        
+        await internalTransfer({
+          userId: user.userId,
+          fromAccountId: accounting.id,
+          toEmail: internalEmail,
+          amountCents: Math.round(parseFloat(internalAmount) * 100),
+          description: internalDesc
         });
+        toast.success(`✅ Sent €${parseFloat(internalAmount).toFixed(2)} to ${recipientName || internalEmail}`);
+        setInternalEmail(""); setInternalAmount(""); setInternalDesc("");
+      } else {
+        if (!fromAccount) throw new Error("Source account not selected");
+        if (!selectedCountry) throw new Error("Destination country not selected");
+
+        const amtCents = Math.round(parseFloat(intlAmount) * 100);
+        await internationalTransfer({
+          userId: user.userId,
+          fromAccountId: fromAccountId,
+          amountCents: amtCents,
+          totalCents: Math.round(conversion.total * 100),
+          currency: fromAccount.currency,
+          description: intlDesc || `Transfer to ${recipientName} (${selectedCountry.name})`,
+          recipientName,
+          recipientIban: recipientIban,
+          network: selectedCountry.network
+        });
+        
         if (saveRecipient) {
-          addRecipient({
-            userId: user!.id, name: tempName,
-            iban: tempIban || undefined, swift_bic: tempSwift || undefined,
-            bank_name: recipientBankName || undefined, country: tempCountry.name,
-            currency: tempCountry.currency, isFavorite: false,
+          await addRecipient({
+            userId: user.userId, name: recipientName,
+            iban: recipientIban || "", swiftBic: recipientSwift || "",
+            bankName: recipientBankName || "", country: selectedCountry.name,
+            currency: selectedCountry.currency
           });
         }
-        toast.success(`✅ Sent ${fmtMoney(Math.round(parseFloat(tempAmount) * 100), fromAccount.currency)} to ${tempName}`);
-        setAccounts(getUserAccounts(user!.id));
-        setRecipients(getUserRecipients(user!.id));
-      } catch (error) {
-        toast.error("Transfer failed. Please try again.");
-        console.error("International transfer error:", error);
-      } finally {
-        setSubmitting(false);
+        toast.success(`✅ Sent ${fmtMoney(amtCents, fromAccount.currency)} to ${recipientName}`);
+        setIntlAmount(""); setIntlDesc(""); setRecipientName(""); setRecipientIban(""); setRecipientSwift(""); setRecipientBankName("");
       }
-    }, 1200);
+      
+      const updatedAccts = await getUserAccounts(user.userId);
+      if (Array.isArray(updatedAccts)) setAccounts(updatedAccts);
+      const updatedRecips = await getUserRecipients(user.userId);
+      if (Array.isArray(updatedRecips)) setRecipients(updatedRecips);
+      setShowConfirm(false);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Transfer failed";
+      toast.error(msg);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const selectRecipient = (r: Recipient) => {
@@ -354,8 +350,8 @@ const Transfers = () => {
                     <Label>Reference (optional)</Label>
                     <Input value={internalDesc} onChange={e => setInternalDesc(e.target.value)} placeholder="Dinner split" maxLength={80} />
                   </div>
-                  <Button className="w-full" variant="hero" onClick={handleInternalSend} disabled={submitting || !recipientExists}>
-                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Send <ArrowRight className="h-4 w-4" /></>}
+                  <Button className="w-full" variant="hero" onClick={handleReviewInternal} disabled={submitting || !recipientExists}>
+                    Review & continue <ArrowRight className="h-4 w-4" />
                   </Button>
                   <p className="text-xs text-center text-muted-foreground">Free · Instant · No limits</p>
                 </div>
@@ -462,7 +458,7 @@ const Transfers = () => {
                       Save to recipient book
                     </label>
 
-                    <Button className="w-full" variant="hero" onClick={() => setShowConfirm(true)} disabled={!selectedCountry}>
+                    <Button className="w-full" variant="hero" onClick={handleReviewInternational} disabled={submitting || !selectedCountry}>
                       Review & continue <ArrowRight className="h-4 w-4" />
                     </Button>
                   </div>
@@ -562,18 +558,29 @@ const Transfers = () => {
           <DialogHeader>
             <DialogTitle className="font-display text-xl">Confirm transfer</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">From</span><span>{fromAccount?.name} ({fromAccount?.currency})</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">To</span><span>{recipientName} · {selectedCountry?.flag} {selectedCountry?.name}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Network</span><span>{network === 'sepa_instant' ? 'SEPA Instant' : network.toUpperCase()}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span className="font-semibold">{fmtMoney(Math.round(parseFloat(intlAmount || "0") * 100), fromAccount?.currency)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Fee</span><span>{fmtMoney(Math.round(conversion.fee * 100), fromAccount?.currency)}</span></div>
-            <div className="flex justify-between font-bold pt-2 border-t"><span>Total</span><span>{fmtMoney(Math.round(conversion.total * 100), fromAccount?.currency)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Recipient gets</span><span className="text-green-600 font-medium">{fmtNumber(conversion.converted, 2)} {toCurrency}</span></div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowConfirm(false)}>Cancel</Button>
-            <Button variant="hero" onClick={handleInternationalSend} disabled={submitting}>
+          
+          {transferType === 'internal' ? (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Method</span><span>Internal (Instant & Free)</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Recipient</span><span>{recipientName}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{internalEmail}</span></div>
+              <div className="flex justify-between font-bold pt-2 border-t"><span>Amount</span><span className="text-primary">{fmtMoney(Math.round(parseFloat(internalAmount || "0") * 100), 'EUR')}</span></div>
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">From</span><span>{fromAccount?.name} ({fromAccount?.currency})</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">To</span><span>{recipientName} · {selectedCountry?.flag} {selectedCountry?.name}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Network</span><span>{network === 'sepa_instant' ? 'SEPA Instant' : network.toUpperCase()}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span className="font-semibold">{fmtMoney(Math.round(parseFloat(intlAmount || "0") * 100), fromAccount?.currency)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Fee</span><span>{fmtMoney(Math.round(conversion.fee * 100), fromAccount?.currency)}</span></div>
+              <div className="flex justify-between font-bold pt-2 border-t"><span>Total</span><span>{fmtMoney(Math.round(conversion.total * 100), fromAccount?.currency)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Recipient gets</span><span className="text-green-600 font-medium">{fmtNumber(conversion.converted, 2)} {toCurrency}</span></div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="outline" onClick={() => setShowConfirm(false)} disabled={submitting}>Cancel</Button>
+            <Button variant="hero" onClick={executeTransfer} disabled={submitting}>
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm & send"}
             </Button>
           </DialogFooter>

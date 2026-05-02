@@ -155,6 +155,11 @@ export default async function handler(req: any, res: any) {
         return res.json({ users: rows });
       }
 
+      case 'getUserByEmail': {
+        const rows = await query(`SELECT id, email, full_name FROM users WHERE email = $1`, [data.email.toLowerCase()]);
+        return res.json({ user: rows[0] || null });
+      }
+
       // ---- GET USER ACCOUNTS ----
       case 'getUserAccounts': {
         const rows = await query(`SELECT * FROM accounts WHERE user_id = $1`, [data.userId]);
@@ -169,7 +174,12 @@ export default async function handler(req: any, res: any) {
 
       // ---- GET ALL TRANSACTIONS ----
       case 'getAllTransactions': {
-        const rows = await query(`SELECT * FROM transactions ORDER BY created_at DESC LIMIT 100`);
+        const rows = await query(`SELECT * FROM transactions ORDER BY created_at DESC LIMIT 200`);
+        return res.json({ transactions: rows });
+      }
+
+      case 'getUserTransactions': {
+        const rows = await query(`SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [data.userId]);
         return res.json({ transactions: rows });
       }
 
@@ -239,10 +249,101 @@ export default async function handler(req: any, res: any) {
         return res.json({ success: true });
       }
 
+      // ---- INTERNAL TRANSFER ----
+      case 'internalTransfer': {
+        const { fromAccountId, toEmail, amountCents, description, userId } = data;
+        const { Pool } = await import('pg');
+        const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 1 });
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          
+          // 1. Get sender account & check freeze
+          const senderRes = await client.query(`SELECT a.*, u.frozen FROM accounts a JOIN users u ON a.user_id = u.id WHERE a.id = $1 AND a.user_id = $2`, [fromAccountId, userId]);
+          if (senderRes.rows.length === 0) throw new Error('Account not found');
+          const senderAcct = senderRes.rows[0];
+          if (senderAcct.frozen) throw new Error('Account is frozen');
+          if (Number(senderAcct.balance_cents) < amountCents) throw new Error('Insufficient balance');
+
+          // 2. Get recipient account
+          const recipientRes = await client.query(`SELECT a.*, u.full_name FROM users u JOIN accounts a ON u.id = a.user_id WHERE u.email = $1 AND a.is_primary = true`, [toEmail.toLowerCase()]);
+          if (recipientRes.rows.length === 0) throw new Error('Recipient not found');
+          const recipientAcct = recipientRes.rows[0];
+
+          // 3. Update balances
+          await client.query(`UPDATE accounts SET balance_cents = balance_cents - $1 WHERE id = $2`, [amountCents, fromAccountId]);
+          await client.query(`UPDATE accounts SET balance_cents = balance_cents + $1 WHERE id = $2`, [amountCents, recipientAcct.id]);
+
+          // 4. Add transactions
+          const txId1 = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+          const txId2 = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+          
+          await client.query(`INSERT INTO transactions (id, user_id, account_id, direction, amount_cents, currency, description, category, counterparty_name, network, status) VALUES ($1,$2,$3,'debit',$4,$5,$6,'Transfer',$7,'internal','completed')`,
+            [txId1, userId, fromAccountId, amountCents, senderAcct.currency, description || `Transfer to ${toEmail}`, recipientAcct.full_name]);
+          
+          await client.query(`INSERT INTO transactions (id, user_id, account_id, direction, amount_cents, currency, description, category, counterparty_name, network, status) VALUES ($1,$2,$3,'credit',$4,$5,$6,'Transfer',$7,'internal','completed')`,
+            [txId2, recipientAcct.user_id, recipientAcct.id, amountCents, recipientAcct.currency, `Received from ${senderRes.rows[0].email}`, senderRes.rows[0].full_name]);
+
+          await client.query('COMMIT');
+          return res.json({ success: true });
+        } catch (err: any) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+          await pool.end();
+        }
+      }
+
+      // ---- INTERNATIONAL TRANSFER ----
+      case 'internationalTransfer': {
+        const { fromAccountId, amountCents, totalCents, currency, description, recipientName, recipientIban, network, userId } = data;
+        const { Pool } = await import('pg');
+        const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 1 });
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          
+          // 1. Get sender account & check freeze
+          const senderRes = await client.query(`SELECT a.*, u.frozen FROM accounts a JOIN users u ON a.user_id = u.id WHERE a.id = $1 AND a.user_id = $2`, [fromAccountId, userId]);
+          if (senderRes.rows.length === 0) throw new Error('Account not found');
+          const senderAcct = senderRes.rows[0];
+          if (senderAcct.frozen) throw new Error('Account is frozen');
+          if (Number(senderAcct.balance_cents) < totalCents) throw new Error('Insufficient balance');
+
+          // 2. Update balance
+          await client.query(`UPDATE accounts SET balance_cents = balance_cents - $1 WHERE id = $2`, [totalCents, fromAccountId]);
+
+          // 3. Add transaction
+          const txId = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+          await client.query(`INSERT INTO transactions (id, user_id, account_id, direction, amount_cents, currency, description, category, counterparty_name, counterparty_iban, network, status) VALUES ($1,$2,$3,'debit',$4,$5,$6,'Transfer',$7,$8,$9,'completed')`,
+            [txId, userId, fromAccountId, amountCents, currency, description, recipientName, recipientIban, network]);
+
+          await client.query('COMMIT');
+          return res.json({ success: true });
+        } catch (err: any) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+          await pool.end();
+        }
+      }
+
       // ---- GET RECIPIENTS ----
       case 'getRecipients': {
         const rows = await query(`SELECT * FROM recipients WHERE user_id = $1 ORDER BY is_favorite DESC, created_at DESC`, [data.userId]);
         return res.json({ recipients: rows });
+      }
+
+      case 'getFxRates': {
+        try {
+          const r = await fetch('https://api.exchangerate.host/latest?base=EUR');
+          const j = await r.json();
+          return res.json({ rates: j.rates || null });
+        } catch {
+          return res.json({ rates: null });
+        }
       }
 
       default:

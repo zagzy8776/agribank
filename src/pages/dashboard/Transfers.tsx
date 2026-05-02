@@ -12,7 +12,7 @@ import { Copy, Loader2, Send, Globe2, Banknote, ArrowRight, Users, Search, Check
 import { fmtMoney, fmtIban, fmtNumber } from "@/lib/format";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
-import { getUserAccounts, getUserRecipients, addRecipient, addTransaction, updateBalance, getAllUsers, isUserFrozen, type MockAccount, type MockRecipient } from "@/lib/mockStore";
+import { getUserAccounts, getUserRecipients, addRecipient, addTransaction, updateBalance, getAllUsers, isUserFrozen, type Account, type Recipient } from "@/lib/db";
 
 // ---------- countries with flags & network ----------
 type Country = {
@@ -107,8 +107,8 @@ const Transfers = () => {
   const [params] = useSearchParams();
   const initialTab = params.get("tab") === "receive" ? "receive" : "send";
 
-  const [accounts, setAccounts] = useState<MockAccount[]>([]);
-  const [recipients, setRecipients] = useState<MockRecipient[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -172,20 +172,20 @@ const Transfers = () => {
   // Internal send
   const handleInternalSend = () => {
     if (isFrozen) { toast.error('Account is frozen. Contact support@agribank.com'); return; }
-    const accounting = accounts.find(a => a.currency === 'EUR' && a.isPrimary);
+    const accounting = accounts.find(a => a.currency === 'EUR' && a.is_primary);
     if (!accounting) { toast.error("No EUR account found"); return; }
     const amt = parseFloat(internalAmount || "0");
     if (!amt || amt <= 0) { toast.error("Enter an amount"); return; }
     const cents = Math.round(amt * 100);
-    if (cents > accounting.balanceCents) { toast.error("Insufficient balance"); return; }
+    if (cents > accounting.balance_cents) { toast.error("Insufficient balance"); return; }
     if (!recipientExists) { toast.error("No AgriBank user found with that email"); return; }
 
     setSubmitting(true);
     setTimeout(() => {
-      updateBalance(accounting.id, accounting.balanceCents - cents);
+      updateBalance(accounting.id, accounting.balance_cents - cents);
       addTransaction({
         userId: user!.id, accountId: accounting.id, direction: 'debit',
-        amountCents: cents, currency: 'EUR',
+        amount_cents: cents, currency: 'EUR',
         description: internalDesc || `Internal transfer to ${internalEmail}`,
         category: 'Transfer', counterpartyName: recipientName || internalEmail, network: 'internal', status: 'completed',
       });
@@ -194,12 +194,12 @@ const Transfers = () => {
       const target = allUsers.find(u => u.email.toLowerCase() === internalEmail.toLowerCase());
       if (target) {
         const targetAccounts = getUserAccounts(target.id);
-        const targetPrimary = targetAccounts.find(a => a.isPrimary);
+        const targetPrimary = targetAccounts.find(a => a.is_primary);
         if (targetPrimary) {
-          updateBalance(targetPrimary.id, targetPrimary.balanceCents + cents);
+          updateBalance(targetPrimary.id, targetPrimary.balance_cents + cents);
           addTransaction({
             userId: target.id, accountId: targetPrimary.id, direction: 'credit',
-            amountCents: cents, currency: 'EUR',
+            amount_cents: cents, currency: 'EUR',
             description: `Received from ${user?.email}`, category: 'Transfer', network: 'internal', status: 'completed',
           });
         }
@@ -221,15 +221,15 @@ const Transfers = () => {
     const amt = parseFloat(intlAmount || "0");
     if (!amt || amt <= 0) { toast.error("Enter an amount"); return; }
     const totalCents = Math.round(conversion.total * 100);
-    if (totalCents > fromAccount.balanceCents) { toast.error("Insufficient balance"); return; }
+    if (totalCents > fromAccount.balance_cents) { toast.error("Insufficient balance"); return; }
 
     setSubmitting(true);
     setTimeout(() => {
-      const newBal = fromAccount.balanceCents - totalCents;
+      const newBal = fromAccount.balance_cents - totalCents;
       updateBalance(fromAccount.id, newBal);
       addTransaction({
         userId: user!.id, accountId: fromAccount.id, direction: 'debit',
-        amountCents: Math.round(amt * 100), currency: fromAccount.currency,
+        amount_cents: Math.round(amt * 100), currency: fromAccount.currency,
         description: intlDesc || `Transfer to ${recipientName} (${selectedCountry.name})`,
         category: 'Transfer', counterpartyName: recipientName,
         counterpartyIban: recipientIban || undefined, network, status: 'completed',
@@ -250,11 +250,11 @@ const Transfers = () => {
     }, 400);
   };
 
-  const selectRecipient = (r: MockRecipient) => {
+  const selectRecipient = (r: Recipient) => {
     setRecipientName(r.name);
     setRecipientIban(r.iban || "");
-    setRecipientSwift(r.swiftBic || "");
-    setRecipientBankName(r.bankName || "");
+    setRecipientSwift(r.swift_bic || "");
+    setRecipientBankName(r.bank_name || "");
     const c = ALL_COUNTRIES.find(c => c.name === r.country);
     if (c) setSelectedCountry(c);
     setShowConfirm(true);
@@ -329,7 +329,7 @@ const Transfers = () => {
                       <Select value={fromAccountId} onValueChange={setFromAccountId}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} · {fmtMoney(a.balanceCents, a.currency)}</SelectItem>)}
+                          {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} · {fmtMoney(a.balance_cents, a.currency)}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>

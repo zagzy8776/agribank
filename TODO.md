@@ -1,10 +1,13 @@
-# Fix Send Button Blank Page Issue
+# AgriBank Project TODO
 
-## Plan Breakdown
-- [x] Create TODO.md with steps
-- [ ] Step 1: Fix Transfers.tsx handlers to prevent blank page
-- [ ] Step 2: Test Transfers page locally  
-- [ ] Step 3: Commit and push fixes to GitHub
-- [ ] Step 4: Verify on GitHub deployment
+## Completed Fixes
+- [x] Fix Send Button Blank Page Issue in Transfers.tsx (added navigation after successful transfer)
+- [x] Add Transaction History page with receipt viewer
+- [x] Update navigation and routing for History
+- [x] Link "View All Transactions" in Overview to History
 
-Current: Starting Step 1
+## Future Improvements
+- Implement PDF download for receipts (add jspdf library)
+- Add filters/search/pagination to History page
+- Test all transfers end-to-end
+- Deploy and verify on Vercel

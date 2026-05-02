@@ -6,14 +6,18 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getUserById, getAllKyc, isUserFrozen } from "@/lib/db";
 
+import { Clock } from "lucide-react";
+
 const nav = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard, end: true },
+  { to: "/dashboard/history", label: "History", icon: Clock },
   { to: "/dashboard/transfers", label: "Send & receive", icon: ArrowLeftRight },
   { to: "/dashboard/recipients", label: "Recipients", icon: Users },
   { to: "/dashboard/crypto", label: "Crypto", icon: Bitcoin },
   { to: "/dashboard/verify", label: "Verify", icon: ShieldCheck },
   { to: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
+
 
 export const DashboardLayout = () => {
   const { user, signOut } = useAuth();

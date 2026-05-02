@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,7 @@ import { fmtMoney, fmtIban, fmtNumber } from "@/lib/format";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
 import { getUserAccounts, getUserRecipients, addRecipient, internalTransfer, internationalTransfer, getUserByEmail, isUserFrozen, getFxRates, type Account, type Recipient } from "@/lib/db";
+
 
 // ---------- countries with flags & network ----------
 type Country = {
@@ -231,64 +233,70 @@ const Transfers = () => {
     setShowConfirm(true);
   };
 
-  const executeTransfer = async () => {
-    if (!user?.userId) return;
-    setSubmitting(true);
-    try {
-      if (transferType === 'internal') {
-        const accounting = Array.isArray(accounts) ? accounts.find(a => a.currency === 'EUR' && a.is_primary) : null;
-        if (!accounting) throw new Error("Primary EUR account not found");
-        
-        await internalTransfer({
-          userId: user.userId,
-          fromAccountId: accounting.id,
-          toEmail: internalEmail,
-          amountCents: Math.round(parseFloat(internalAmount) * 100),
-          description: internalDesc
-        });
-        toast.success(`✅ Sent €${parseFloat(internalAmount).toFixed(2)} to ${recipientName || internalEmail}`);
-        setInternalEmail(""); setInternalAmount(""); setInternalDesc("");
-      } else {
-        if (!fromAccount) throw new Error("Source account not selected");
-        if (!selectedCountry) throw new Error("Destination country not selected");
+import { useNavigate } from "react-router-dom";
 
-        const amtCents = Math.round(parseFloat(intlAmount) * 100);
-        await internationalTransfer({
-          userId: user.userId,
-          fromAccountId: fromAccountId,
-          amountCents: amtCents,
-          totalCents: Math.round(conversion.total * 100),
-          currency: fromAccount.currency,
-          description: intlDesc || `Transfer to ${recipientName} (${selectedCountry.name})`,
-          recipientName,
-          recipientIban: recipientIban,
-          network: selectedCountry.network
-        });
-        
-        if (saveRecipient) {
-          await addRecipient({
-            userId: user.userId, name: recipientName,
-            iban: recipientIban || "", swiftBic: recipientSwift || "",
-            bankName: recipientBankName || "", country: selectedCountry.name,
-            currency: selectedCountry.currency
-          });
-        }
-        toast.success(`✅ Sent ${fmtMoney(amtCents, fromAccount.currency)} to ${recipientName}`);
-        setIntlAmount(""); setIntlDesc(""); setRecipientName(""); setRecipientIban(""); setRecipientSwift(""); setRecipientBankName("");
-      }
+const navigate = useNavigate();
+
+const executeTransfer = async () => {
+  if (!user?.userId) return;
+  setSubmitting(true);
+  try {
+    if (transferType === 'internal') {
+      const accounting = Array.isArray(accounts) ? accounts.find(a => a.currency === 'EUR' && a.is_primary) : null;
+      if (!accounting) throw new Error("Primary EUR account not found");
       
-      const updatedAccts = await getUserAccounts(user.userId);
-      if (Array.isArray(updatedAccts)) setAccounts(updatedAccts);
-      const updatedRecips = await getUserRecipients(user.userId);
-      if (Array.isArray(updatedRecips)) setRecipients(updatedRecips);
-      setShowConfirm(false);
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : "Transfer failed";
-      toast.error(msg);
-    } finally {
-      setSubmitting(false);
+      await internalTransfer({
+        userId: user.userId,
+        fromAccountId: accounting.id,
+        toEmail: internalEmail,
+        amountCents: Math.round(parseFloat(internalAmount) * 100),
+        description: internalDesc
+      });
+      toast.success(`✅ Sent €${parseFloat(internalAmount).toFixed(2)} to ${recipientName || internalEmail}`);
+      setInternalEmail(""); setInternalAmount(""); setInternalDesc("");
+    } else {
+      if (!fromAccount) throw new Error("Source account not selected");
+      if (!selectedCountry) throw new Error("Destination country not selected");
+
+      const amtCents = Math.round(parseFloat(intlAmount) * 100);
+      await internationalTransfer({
+        userId: user.userId,
+        fromAccountId: fromAccountId,
+        amountCents: amtCents,
+        totalCents: Math.round(conversion.total * 100),
+        currency: fromAccount.currency,
+        description: intlDesc || `Transfer to ${recipientName} (${selectedCountry.name})`,
+        recipientName,
+        recipientIban: recipientIban,
+        network: selectedCountry.network
+      });
+      
+      if (saveRecipient) {
+        await addRecipient({
+          userId: user.userId, name: recipientName,
+          iban: recipientIban || "", swiftBic: recipientSwift || "",
+          bankName: recipientBankName || "", country: selectedCountry.name,
+          currency: selectedCountry.currency
+        });
+      }
+      toast.success(`✅ Sent ${fmtMoney(amtCents, fromAccount.currency)} to ${recipientName}`);
+      setIntlAmount(""); setIntlDesc(""); setRecipientName(""); setRecipientIban(""); setRecipientSwift(""); setRecipientBankName("");
     }
-  };
+    
+    const updatedAccts = await getUserAccounts(user.userId);
+    if (Array.isArray(updatedAccts)) setAccounts(updatedAccts);
+    const updatedRecips = await getUserRecipients(user.userId);
+    if (Array.isArray(updatedRecips)) setRecipients(updatedRecips);
+    setShowConfirm(false);
+    navigate('/dashboard');
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Transfer failed";
+    toast.error(msg);
+  } finally {
+    setSubmitting(false);
+  }
+};
+
 
   const selectRecipient = (r: Recipient) => {
     setRecipientName(r.name);
@@ -318,12 +326,21 @@ const Transfers = () => {
           <TabsTrigger value="receive"><Banknote className="h-4 w-4" />Receive</TabsTrigger>
         </TabsList>
 
-        {/* SEND — two sub-tabs */}
+        {/* SEND — three sub-tabs */}
         <TabsContent value="send" className="mt-6">
-          <Tabs defaultValue="international">
+          <Tabs defaultValue="sepa" onValueChange={(v) => {
+            if (v === 'sepa') {
+              const firstSepa = ALL_COUNTRIES.find(c => c.network.startsWith('sepa'));
+              if (firstSepa) setSelectedCountry(firstSepa);
+            } else if (v === 'international') {
+              const firstSwift = ALL_COUNTRIES.find(c => c.network === 'swift');
+              if (firstSwift) setSelectedCountry(firstSwift);
+            }
+          }}>
             <TabsList>
               <TabsTrigger value="internal"><Users className="h-3.5 w-3.5" />AgriBank user</TabsTrigger>
-              <TabsTrigger value="international"><Globe2 className="h-3.5 w-3.5" />International</TabsTrigger>
+              <TabsTrigger value="sepa"><Banknote className="h-3.5 w-3.5" />Europe (SEPA)</TabsTrigger>
+              <TabsTrigger value="international"><Globe2 className="h-3.5 w-3.5" />Global (SWIFT)</TabsTrigger>
             </TabsList>
 
             {/* Internal transfer */}
@@ -358,11 +375,97 @@ const Transfers = () => {
               </Card>
             </TabsContent>
 
-            {/* International transfer */}
+            {/* Europe / SEPA transfer */}
+            <TabsContent value="sepa" className="mt-4">
+              <div className="grid lg:grid-cols-3 gap-6">
+                <Card className="lg:col-span-2 p-6 border-border/70">
+                  <div className="space-y-5">
+                    <p className="text-sm text-muted-foreground">Send EUR instantly to any bank in the SEPA zone (EU/EEA).</p>
+                    {/* From account */}
+                    <div className="space-y-2">
+                      <Label>From account</Label>
+                      <Select value={fromAccountId} onValueChange={setFromAccountId}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {accounts.filter(a => a.currency === 'EUR').map(a => <SelectItem key={a.id} value={a.id}>{a.name} · {fmtMoney(a.balance_cents, a.currency)}</SelectItem>)}
+                          {accounts.filter(a => a.currency !== 'EUR').length > 0 && <div className="px-2 py-1.5 text-[10px] uppercase text-muted-foreground border-t">Other currencies (Auto-FX)</div>}
+                          {accounts.filter(a => a.currency !== 'EUR').map(a => <SelectItem key={a.id} value={a.id}>{a.name} · {fmtMoney(a.balance_cents, a.currency)}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Country selector (SEPA Only) */}
+                    <div className="space-y-2">
+                      <Label>Destination Country</Label>
+                      <Select value={selectedCountry?.code || ''} onValueChange={(v) => {
+                        const c = ALL_COUNTRIES.find(c => c.code === v);
+                        setSelectedCountry(c || null);
+                        setRecipientIban("");
+                      }}>
+                        <SelectTrigger><SelectValue placeholder="Select EU country..." /></SelectTrigger>
+                        <SelectContent className="max-h-80">
+                          {ALL_COUNTRIES.filter(c => c.network.startsWith('sepa')).map(c => (
+                            <SelectItem key={c.code} value={c.code}>{c.flag} {c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Recipient name</Label>
+                      <Input value={recipientName} onChange={e => setRecipientName(e.target.value)} placeholder="Jean Dupont" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>IBAN</Label>
+                      <Input value={recipientIban} onChange={e => setRecipientIban(e.target.value.toUpperCase())} placeholder="FR76 ..." />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label>Amount (EUR)</Label>
+                        <Input value={intlAmount} onChange={e => setIntlAmount(e.target.value)} placeholder="100.00" type="number" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Reference</Label>
+                        <Input value={intlDesc} onChange={e => setIntlDesc(e.target.value)} placeholder="Invoice #001" maxLength={80} />
+                      </div>
+                    </div>
+
+                    <Button className="w-full" variant="hero" onClick={handleReviewInternational} disabled={submitting || !selectedCountry || !recipientIban}>
+                      Review SEPA Transfer <ArrowRight className="h-4 w-4" />
+                    </Button>
+                    <p className="text-center text-[10px] text-muted-foreground uppercase tracking-wider">Fast · Safe · 0.1% Fee</p>
+                  </div>
+                </Card>
+
+                {/* Side panel for SEPA */}
+                <div className="space-y-4">
+                  <Card className="p-5 bg-gradient-cream border-border/70">
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-2">
+                      <Banknote className="h-3.5 w-3.5" /> SEPA Details
+                    </p>
+                    {intlAmount ? (
+                      <div className="mt-4 space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span>{fmtMoney(Math.round(parseFloat(intlAmount || "0") * 100), 'EUR')}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Network Fee</span><span>{fmtMoney(Math.round(conversion.fee * 100), fromAccount?.currency || 'EUR')}</span></div>
+                        <div className="flex justify-between font-medium pt-2 border-t"><span>You pay</span><span>{fmtMoney(Math.round(conversion.total * 100), fromAccount?.currency || 'EUR')}</span></div>
+                        <p className="text-[10px] text-muted-foreground mt-4 italic">Funds typically arrive in 10 seconds to 1 business day.</p>
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-sm text-muted-foreground">Enter an amount to see fees.</p>
+                    )}
+                  </Card>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* Global / SWIFT transfer */}
             <TabsContent value="international" className="mt-4">
               <div className="grid lg:grid-cols-3 gap-6">
                 <Card className="lg:col-span-2 p-6 border-border/70">
                   <div className="space-y-5">
+                    <p className="text-sm text-muted-foreground">Send money worldwide via the SWIFT network.</p>
                     {/* From account */}
                     <div className="space-y-2">
                       <Label>From account</Label>
@@ -469,21 +572,26 @@ const Transfers = () => {
                   {/* Conversion */}
                   <Card className="p-5 bg-gradient-cream border-border/70">
                     <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground flex items-center gap-2">
-                      <Globe2 className="h-3.5 w-3.5" /> Live exchange
+                      <Globe2 className="h-3.5 w-3.5" /> {selectedCountry?.network.startsWith('sepa') ? 'SEPA Transfer' : 'Live exchange'}
                     </p>
                     {intlAmount && selectedCountry ? (
                       <>
                         <p className="mt-3 font-display text-3xl text-primary">
                           {fmtNumber(conversion.converted, 2)} <span className="text-base text-muted-foreground">{toCurrency}</span>
                         </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          1 {fromAccount?.currency || 'EUR'} = {fmtNumber(conversion.rate, 4)} {toCurrency}
-                        </p>
+                        {fromAccount?.currency !== toCurrency && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            1 {fromAccount?.currency || 'EUR'} = {fmtNumber(conversion.rate, 4)} {toCurrency}
+                          </p>
+                        )}
                         <div className="mt-5 space-y-2 text-sm">
                           <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span>{fmtMoney(Math.round(parseFloat(intlAmount || "0") * 100), fromAccount?.currency)}</span></div>
                           <div className="flex justify-between"><span className="text-muted-foreground">Fee</span><span>{fmtMoney(Math.round(conversion.fee * 100), fromAccount?.currency)}</span></div>
                           <div className="flex justify-between font-medium pt-2 border-t"><span>You pay</span><span>{fmtMoney(Math.round(conversion.total * 100), fromAccount?.currency)}</span></div>
                         </div>
+                        {selectedCountry.network.startsWith('sepa') && (
+                          <p className="text-[10px] text-muted-foreground mt-4 italic">Funds arrive in 10s to 1 business day.</p>
+                        )}
                       </>
                     ) : (
                       <p className="mt-4 text-sm text-muted-foreground">Select a country and enter an amount.</p>

@@ -76,7 +76,12 @@ export default function Overview() {
           {txns.length === 0 && !txnsQuery.isLoading && <p className="text-sm text-muted-foreground">No transactions yet.</p>}
           {(txns as OverviewTx[]).map((tx) => (<div key={tx.id} className="flex items-center justify-between border-b py-3 last:border-0 last:pb-0"><div className="flex items-center gap-3"><div className={`p-2 rounded-full ${tx.type==='credit'?'bg-green-100 text-green-600':'bg-gray-100 text-gray-600'}`}>{tx.type==='credit'?<ArrowDownLeft className="h-4 w-4"/>:<ArrowUpRight className="h-4 w-4"/>}</div><div><p className="font-medium">{tx.name}</p><p className="text-sm text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3"/>{tx.date}</p></div></div><div className="text-right"><p className={`font-semibold ${tx.type==='credit'?'text-green-600':''}`}>{tx.type==='credit'?'+':'-'}{fmtMoney(Math.round(tx.amount*100), tx.currency)}</p><Badge variant="outline" className="text-xs mt-1">{tx.status}</Badge></div></div>))}
           {balanceQuery.isLoading && <p>Loading...</p>}
-          <Button variant="secondary" className="w-full mt-6"><Eye className="mr-2 h-4 w-4"/>View All Transactions</Button>
+          <Button asChild variant="secondary" className="w-full mt-6">
+            <Link to="/dashboard/history">
+              <Eye className="mr-2 h-4 w-4"/>View All Transactions
+            </Link>
+          </Button>
+
         </div></CardContent>
       </Card>
       <div className="grid gap-4 md:grid-cols-3">

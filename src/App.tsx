@@ -16,8 +16,10 @@ import Recipients from "./pages/dashboard/Recipients";
 import Crypto from "./pages/dashboard/Crypto";
 import Verify from "./pages/dashboard/Verify";
 import Settings from "./pages/dashboard/Settings";
+import History from "./pages/dashboard/History";
 import Admin from "./pages/dashboard/Admin";
 import AdminLogin from "./pages/AdminLogin";
+
 
 const queryClient = new QueryClient();
 
@@ -42,11 +44,13 @@ const App = () => (
               }
             >
               <Route index element={<Overview />} />
+              <Route path="history" element={<History />} />
               <Route path="transfers" element={<Transfers />} />
               <Route path="recipients" element={<Recipients />} />
               <Route path="crypto" element={<Crypto />} />
               <Route path="verify" element={<Verify />} />
               <Route path="settings" element={<Settings />} />
+
             </Route>
             <Route path="/dashboard/admin" element={<Admin />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

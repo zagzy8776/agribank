@@ -10,6 +10,12 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      '/api': {
+        target: 'https://agribank.vercel.app',
+        changeOrigin: true,
+      },
+    },
   },
   plugins: [react()],
   resolve: {

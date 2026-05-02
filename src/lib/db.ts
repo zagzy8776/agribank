@@ -11,14 +11,28 @@ function gid(): string {
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function call(action: string, data?: Record<string, unknown>): Promise<any> {
-  const res = await fetch(API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, data: data || {} }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || 'API error');
+  let res: Response;
+  try {
+    res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, data: data || {} }),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Backend unreachable (${msg}). Is the API server running?`);
+  }
+  const text = await res.text();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Backend returned invalid response (status ${res.status}). Expected JSON, got: ${text.slice(0, 200)}`);
+  }
+  if (!res.ok) throw new Error(json.error || `API error (status ${res.status})`);
   return json;
 }
 

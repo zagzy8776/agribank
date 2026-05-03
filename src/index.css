@@ -24,7 +24,8 @@
     --primary-foreground: 38 40极% 96%;
     --primary-glow: 130 35% 32%;
 
-    --secondary: 38 35% 90%;           /* linen */\极n    --secondary-foreground: 145 35% 14%;
+    --secondary: 38 35% 90%;           /* linen */
+    --secondary-foreground: 145 35% 14%;
 
     --muted: 38 25% 92%;
     --muted-foreground: 145 12% 38%;
@@ -55,7 +56,8 @@
     /* Shadows */
     --shadow-soft: 0 1px 2极px hsl(145 30% 12% / 0.04), 0 8px 24px -8px hsl(145 30% 12% / 0.08);
     --shadow-elevated: 0 12px 40px -12px hsl(145 45% 18% / 0.25);
-    --shadow-card: 极0 1px 0 hsl(38 20% 88%), 0 20px 50px -20px hsl(145 30% 14% / 0.18);\极n    --shadow-glow: 0 0 60px -10px hsl(38 70% 55% / 0.5);
+    --shadow-card: 极0 1px 0 hsl(38 20% 88%), 0 20px 50px -20px hsl(145 30% 14% / 0.18);
+    --shadow-glow: 0 0 60px -10px hsl(38 70% 55% / 0.5);
 
     /* Motion */
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -109,7 +111,8 @@
   }
 
   ::selection {
-    background: hsl(var(--accent) / 0.4);\极n    color: hsl(var(--primary));
+    background: hsl(var(--accent) / 0.4);
+    color: hsl(var(--primary));
   }
 }
 

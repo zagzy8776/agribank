@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";\nimport { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { ArrowDownRight, ArrowUpRight, Loader2, Bitcoin, AlertCircle } from "lucide-react";
 import { fmtMoney, fmtNumber, fmtCrypto } from "@/lib/format";
@@ -31,11 +32,11 @@ const Crypto = () => {
   const [tradeAmountEur, setTradeAmountEur] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [slippage, setSlippage] = useState(0.002); // 0.2% default
-  const [fee, setFee] = useState(0.005); // 0.5% default fee
+  const [slippage, setSlippage] = useState(0.002);
+  const [fee, setFee] = useState(0.005);
 
   const { coins, isLoading: pricesLoading, error: pricesError } = useCryptoPrices();
-  const { chartData, isLoading: chartLoading, setDays } = useCryptoChart(selectedCoin?.id || '');\n  const { data: orderBook, isLoading: bookLoading } = useCryptoOrderBook(selectedCoin?.id || '');
+  const { chartData, isLoading: chartLoading, setDays } = useCryptoChart(selectedCoin?.id || '');
   const { data: orderBook, isLoading: bookLoading } = useCryptoOrderBook(selectedCoin?.id || '');
 
   useEffect(() => {
@@ -45,7 +46,6 @@ const Crypto = () => {
       setEurAccount(accts.find(a => a.currency === "EUR" && a.is_primary) || accts[0] || null);
       const cryptoAccts = await getUserCryptoAccounts(user.userId);
       setCryptoAccounts(cryptoAccts);
-      // Sync holdings with accounts
       const raw = localStorage.getItem(`crypto_holdings_${user.userId}`);
       const localHoldings = raw ? JSON.parse(raw) : [];
       setHoldings(localHoldings);
@@ -76,7 +76,6 @@ const Crypto = () => {
 
   const getExecutedPrice = () => {
     if (orderType === "limit") return parseFloat(limitPrice || selectedCoin?.price_eur.toString() || "0");
-    // Simulate slippage
     const base = selectedCoin?.price_eur || 0;
     const adjustment = tradeMode === "buy" ? 1 + slippage : 1 - slippage;
     return base * adjustment;
@@ -92,9 +91,7 @@ const Crypto = () => {
     const cryptoAccount = cryptoAccounts.find(a => a.currency === selectedCoin.symbol);
 
     if (tradeMode === "buy" && !cryptoAccount) {
-      // Create crypto account if not exists
       await createCryptoAccount(user.userId, selectedCoin.symbol);
-      // Reload accounts
       const accts = await getUserCryptoAccounts(user.userId);
       setCryptoAccounts(accts);
     }
@@ -105,7 +102,6 @@ const Crypto = () => {
     setSubmitting(true);
     setProcessing(true);
 
-    // Simulate execution delay
     setTimeout(async () => {
       try {
         const cents = Math.round(amtEur * 100);
@@ -124,14 +120,12 @@ const Crypto = () => {
           } else { 
             nh.push({ symbol: selectedCoin.symbol, name: selectedCoin.name, amount: cryptoQty, avgBuyPriceEur: executedPrice }); 
           }
-          // Transfer to crypto account
           const cryptoAcc = cryptoAccounts.find(a => a.currency === selectedCoin.symbol) || { id: 'temp' };
           await transferToCrypto(eurAccount.id, cryptoAcc.id, totalCents, selectedCoin.symbol, executedPrice, `Buy ${cryptoQty} ${selectedCoin.symbol}`);
         } else {
           const na = existing!.amount - cryptoQty;
           if (na <= 0.0000001) nh = nh.filter(h => h.symbol !== selectedCoin.symbol);
           else nh = nh.map(h => h.symbol === selectedCoin.symbol ? { ...h, amount: na } : h);
-          // Transfer from crypto account
           const cryptoAcc = cryptoAccounts.find(a => a.currency === selectedCoin.symbol) || { id: 'temp' };
           await transferFromCrypto(cryptoAcc.id, eurAccount.id, cryptoQty, selectedCoin.symbol, executedPrice, `Sell ${cryptoQty} ${selectedCoin.symbol}`);
         }
@@ -155,7 +149,7 @@ const Crypto = () => {
         setSubmitting(false);
         setProcessing(false);
       }
-    }, Math.random() * 3000 + 2000); // 2-5s delay
+    }, Math.random() * 3000 + 2000);
   };
 
   const handleCoinClick = (coin: CryptoCoin) => {
@@ -177,7 +171,6 @@ const Crypto = () => {
         </div>
       </div>
 
-      {/* Portfolio Card */}
       <Card className="mt-8 p-6 sm:p-8 border-border/70 shadow-card overflow-hidden bg-gradient-field text-primary-foreground">
         <p className="text-xs uppercase tracking-[0.22em] opacity-70">Portfolio value</p>
         <div className="mt-3 flex items-baseline gap-3 flex-wrap">
@@ -190,7 +183,6 @@ const Crypto = () => {
         <p className="mt-2 text-xs opacity-70">Available EUR: {fmtMoney(eurAccount?.balance_cents ?? 0, "EUR")}</p>
       </Card>
 
-      {/* Holdings */}
       {holdings.length > 0 && (
         <>
           <h2 className="mt-12 font-display text-2xl text-primary">Your holdings</h2>
@@ -221,12 +213,11 @@ const Crypto = () => {
         </>
       )}
 
-      {/* Chart for Selected Coin */}
       {selectedCoin && (
         <div className="mt-12">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-display text-2xl text-primary">{selectedCoin.name} Chart</h2>
-            <Select value={chartData.length > 0 ? String(useCryptoChart(selectedCoin.id).days) : '7'} onValueChange={(v) => setDays(Number(v))}>
+            <Select value={chartData.length > 0 ? String(setDays(Number(chartData.days || 7))) : '7'} onValueChange={(v) => setDays(Number(v))}>
               <SelectTrigger className="w-32">
                 <SelectValue />
               </SelectTrigger>
@@ -258,7 +249,6 @@ const Crypto = () => {
         </div>
       )}
 
-      {/* Order Book for Selected Coin */}
       {selectedCoin && orderBook && (
         <div className="mt-8 grid lg:grid-cols-2 gap-6">
           <Card>
@@ -326,7 +316,6 @@ const Crypto = () => {
         </div>
       )}
 
-      {/* Market Table */}
       <h2 className="mt-12 font-display text-2xl text-primary">Market</h2>
       <Card className="mt-4 border-border/70 overflow-hidden">
         {pricesLoading ? (
@@ -365,7 +354,6 @@ const Crypto = () => {
         )}
       </Card>
 
-      {/* Trade Dialog with Order Types, Slippage, Limit */}
       <Dialog open={tradeOpen} onOpenChange={setTradeOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -382,7 +370,7 @@ const Crypto = () => {
                 </TabsList>
               </Tabs>
               <p className="text-sm text-muted-foreground">
-                Current price: <span className="text-foreground font-medium">{fmtMoney(Math.round(selectedCoin.price_eur * 100), "EUR")}</span>
+                Current price: <span className="text-foreground font-medium">{fmtMoney(Math.round(selectedCoin.price_eur * 100), 'EUR')}</span>
               </p>
               <div className="space-y-2">
                 <Label>Order Type</Label>
@@ -457,5 +445,3 @@ const Crypto = () => {
 };
 
 export default Crypto;
-
-

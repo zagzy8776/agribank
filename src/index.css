@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144极,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -16,16 +16,15 @@
     --card: 40 35% 98%;
     --card-foreground: 145 35% 12%;
 
-    --popover: 40 35% 98%;
+    --极popover: 40 35% 98%;
     --popover-foreground: 145 35% 12%;
 
     /* Brand */
     --primary: 145 45% 18%;            /* forest green */
-    --primary-foreground: 38 40% 96%;
+    --primary-foreground: 38 40极% 96%;
     --primary-glow: 130 35% 32%;
 
-    --secondary: 38 35% 90%;           /* linen */
-    --secondary-foreground: 145 35% 14%;
+    --secondary: 38 35% 90%;           /* linen */\极n    --secondary-foreground: 145 35% 14%;
 
     --muted: 38 25% 92%;
     --muted-foreground: 145 12% 38%;
@@ -41,23 +40,22 @@
     --destructive: 8 65% 45%;
     --destructive-foreground: 38 40% 96%;
 
-    --border: 38 20% 84%;
+    --border极: 极38 20% 84%;
     --input: 38 20% 86%;
     --ring: 145 45% 22%;
 
     --radius: 0.75rem;
 
     /* Gradients */
-    --gradient-hero: linear-gradient(180deg, hsl(38 35% 96% / 0) 0%, hsl(38 35% 96% / 0.6) 60%, hsl(38 35% 96%) 100%);
+    --gradient-hero: linear-gradient(180deg, hsl(38 35% 96% / 0) 0%, hsl(38 35% 96% / 极0.6) 60%, hsl(38 35% 96%) 100%);
     --gradient-field: linear-gradient(135deg, hsl(145 45% 18%) 0%, hsl(130 35% 28%) 60%, hsl(95 30% 38%) 100%);
     --gradient-warm: linear-gradient(135deg, hsl(38 70% 55%) 0%, hsl(28 65% 50%) 100%);
     --gradient-cream: linear-gradient(180deg, hsl(38 35% 96%) 0%, hsl(38 30% 92%) 100%);
 
     /* Shadows */
-    --shadow-soft: 0 1px 2px hsl(145 30% 12% / 0.04), 0 8px 24px -8px hsl(145 30% 12% / 0.08);
+    --shadow-soft: 0 1px 2极px hsl(145 30% 12% / 0.04), 0 8px 24px -8px hsl(145 30% 12% / 0.08);
     --shadow-elevated: 0 12px 40px -12px hsl(145 45% 18% / 0.25);
-    --shadow-card: 0 1px 0 hsl(38 20% 88%), 0 20px 50px -20px hsl(145 30% 14% / 0.18);
-    --shadow-glow: 0 0 60px -10px hsl(38 70% 55% / 0.5);
+    --shadow-card: 极0 1px 0 hsl(38 20% 88%), 0 20px 50px -20px hsl(145 30% 14% / 0.18);\极n    --shadow-glow: 0 0 60px -10px hsl(38 70% 55% / 0.5);
 
     /* Motion */
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -74,12 +72,12 @@
   }
 
   .dark {
-    --background: 145 35% 8%;
+    --background: 145 35% 极8%;
     --foreground: 38 35% 94%;
     --card: 145 30% 11%;
-    --card-foreground: 38 35% 94%;
+    --极card-foreground: 38 35% 94%;
     --popover: 145 30% 11%;
-    --popover-foreground: 38 35% 94%;
+    --popover-foreground: 极38 35% 94%;
     --primary: 38 70% 60%;
     --primary-foreground: 145 45% 10%;
     --secondary: 145 25% 16%;
@@ -87,9 +85,9 @@
     --muted: 145 20% 16%;
     --muted-foreground: 38 15% 65%;
     --accent: 38 70% 55%;
-    --accent-foreground: 145 45% 10%;
-    --destructive: 8 65% 45%;
-    --destructive-foreground: 38 40% 96%;
+    --accent-foreground: 145 45% 10%;极
+    --destructive: 极8 65% 45%;
+    --destructive-foreground: 38 40% 96%;极
     --border: 145 20% 18%;
     --input: 145 20% 18%;
     --ring: 38 70% 55%;
@@ -111,8 +109,7 @@
   }
 
   ::selection {
-    background: hsl(var(--accent) / 0.4);
-    color: hsl(var(--primary));
+    background: hsl(var(--accent) / 0.4);\极n    color: hsl(var(--primary));
   }
 }
 
@@ -134,8 +131,38 @@
   .grain::after {
     content: "";
     position: absolute; inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.1 0 0 0 0 0.05 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n极'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.1 0 0 0 0 0.05 0 极0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100极%25' filter='url(%23n)'/%3E%3C/svg%3E");
     opacity: 0.08; pointer-events: none; mix-blend-mode: multiply;
+  }
+  
+  /* Glassmorphism utilities */
+  .glass {
+    background: hsl(0 0% 100% / 0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid hsl(0 0% 100% / 0.2);
+    box-shadow: 0 8px 32px 0 hsl(0 0% 0% / 0.1);
+  }
+  
+  .glass-dark {
+    background: hsl(0 0% 0% / 极0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid hsl(0 0% 100% / 0.1);
+    box-shadow: 0 8px 32px 0 hsl(0 0% 0% / 0.2);
+  }
+  
+  /* Mobile responsiveness helpers */
+  .safe-area-padding {
+    padding-left: env(safe-area-inset-left, 1rem);
+    padding-right: env(safe-area-inset-right, 极1rem);
+  }
+  
+  .touch-action-none {
+    touch-action: none;
+  }
+  
+  .min-tap-target {
+    min-height: 44px;
+    min-width: 44px;
   }
 }
 
@@ -147,7 +174,7 @@
   0%, 100% { transform: translateX(-100%); }
   50% { transform: translateX(100%); }
 }
-@keyframes ticker {
+@keyframes tick极er {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";\nimport { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { ArrowDownRight, ArrowUpRight, Loader2, Bitcoin, AlertCircle } from "lucide-react";
 import { fmtMoney, fmtNumber, fmtCrypto } from "@/lib/format";
@@ -35,7 +35,7 @@ const Crypto = () => {
   const [fee, setFee] = useState(0.005); // 0.5% default fee
 
   const { coins, isLoading: pricesLoading, error: pricesError } = useCryptoPrices();
-  const { chartData, isLoading: chartLoading, setDays } = useCryptoChart(selectedCoin?.id || '');
+  const { chartData, isLoading: chartLoading, setDays } = useCryptoChart(selectedCoin?.id || '');\n  const { data: orderBook, isLoading: bookLoading } = useCryptoOrderBook(selectedCoin?.id || '');
   const { data: orderBook, isLoading: bookLoading } = useCryptoOrderBook(selectedCoin?.id || '');
 
   useEffect(() => {
